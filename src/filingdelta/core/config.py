@@ -61,6 +61,10 @@ class Settings(BaseSettings):
         default=None,
         alias="LLAMA_CLOUD_API_KEY",
     )
+    llama_cloud_base_url: str | None = Field(
+        default=None,
+        alias="LLAMA_CLOUD_BASE_URL",
+    )
 
     @property
     def app_name(self) -> str:
@@ -82,6 +86,15 @@ class Settings(BaseSettings):
             )
         return self.llama_cloud_api_key
 
+    def llama_cloud_client_kwargs(self) -> dict[str, str]:
+        kwargs = {"api_key": self.require_llama_cloud_api_key()}
+        if self.llama_cloud_base_url:
+            base_url = self.llama_cloud_base_url.strip()
+            if not base_url.startswith(("http://", "https://")):
+                base_url = f"https://{base_url}"
+            kwargs["base_url"] = base_url
+        return kwargs
+
     def safe_summary(self) -> dict[str, object]:
         return {
             "app_name": self.app_name,
@@ -90,6 +103,7 @@ class Settings(BaseSettings):
             "openai_api_key_configured": bool(self.openai_api_key),
             "use_llama_parse": self.filingdelta_use_llama_parse,
             "llama_parse_configured": bool(self.llama_cloud_api_key),
+            "llama_cloud_base_url_configured": bool(self.llama_cloud_base_url),
             "llama_parse_tier": self.filingdelta_llama_parse_tier,
             "llama_extract_tier": self.filingdelta_llama_extract_tier,
             "openai_base_url_configured": bool(self.openai_base_url),

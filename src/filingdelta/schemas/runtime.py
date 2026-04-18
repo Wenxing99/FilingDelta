@@ -15,6 +15,7 @@ class RuntimeConfigResponse(BaseModel):
     openai_api_key_configured: bool
     use_llama_parse: bool
     llama_parse_configured: bool
+    llama_cloud_base_url_configured: bool
     llama_parse_tier: str
     llama_extract_tier: str
     openai_base_url_configured: bool

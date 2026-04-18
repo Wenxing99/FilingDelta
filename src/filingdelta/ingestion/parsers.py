@@ -23,7 +23,7 @@ class FilingParser(Protocol):
 class LlamaParseFilingParser:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._client = LlamaCloud(api_key=settings.require_llama_cloud_api_key())
+        self._client = LlamaCloud(**settings.llama_cloud_client_kwargs())
 
     def parse(self, source: FilingSource) -> ParsedFiling:
         with source.source_path.open("rb") as file_handle:

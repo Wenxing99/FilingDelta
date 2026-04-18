@@ -21,7 +21,7 @@ class FilingFactExtractor(Protocol):
 class LlamaExtractFactExtractor:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
-        self._client = LlamaCloud(api_key=self._settings.require_llama_cloud_api_key())
+        self._client = LlamaCloud(**self._settings.llama_cloud_client_kwargs())
 
     def extract(self, source: FilingSource) -> HeadlineMetricFacts:
         with source.source_path.open("rb") as file_handle:
@@ -40,9 +40,13 @@ class LlamaExtractFactExtractor:
             },
             verbose=True,
         )
+        job_with_metadata = self._client.extract.get(
+            job.id,
+            expand=["extract_metadata"],
+        )
 
         extracted = ExtractedData.from_extract_job(
-            job,
+            job_with_metadata,
             HeadlineMetricsExtractionSchema,
             file_id=uploaded_file.id,
             file_name=source.source_path.name,

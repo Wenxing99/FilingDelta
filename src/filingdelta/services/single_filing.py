@@ -10,6 +10,7 @@ from filingdelta.ingestion.fact_extractors import get_filing_fact_extractor
 from filingdelta.ingestion.pipeline import FilingIngestionPipeline, IngestionResult
 from filingdelta.schemas.facts import HeadlineMetricFacts
 from filingdelta.schemas.filing import FilingSource
+from filingdelta.services.fact_citation_enrichment import enrich_headline_metric_citations
 from filingdelta.storage.paths import ensure_data_dirs
 
 
@@ -34,6 +35,7 @@ class SingleFilingProcessor:
         paths = ensure_data_dirs()
         ingestion = self._pipeline.run(source)
         facts = self._fact_extractor.extract(source)
+        facts = enrich_headline_metric_citations(ingestion.parsed_filing, facts)
 
         document_id = ingestion.parsed_filing.document.document_id
         parsed_path = paths["parsed"] / f"{document_id}.parsed.json"

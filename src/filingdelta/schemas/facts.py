@@ -48,6 +48,8 @@ class ExtractedFactField(BaseModel):
     value: str | float | int | None = None
     reasoning: str | None = None
     confidence: float | None = None
+    evidence_page: int | None = None
+    evidence_quote: str | None = None
     citations: list[Citation] = Field(default_factory=list)
 
 

@@ -34,7 +34,7 @@ class SingleFilingProcessor:
     def run(self, source: FilingSource) -> SingleFilingRunResult:
         paths = ensure_data_dirs()
         ingestion = self._pipeline.run(source)
-        facts = self._fact_extractor.extract(source)
+        facts = self._fact_extractor.extract(source, ingestion.parsed_filing)
         facts = enrich_headline_metric_citations(ingestion.parsed_filing, facts)
 
         document_id = ingestion.parsed_filing.document.document_id

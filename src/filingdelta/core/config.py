@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,8 +33,16 @@ class Settings(BaseSettings):
         default=True,
         alias="FILINGDELTA_USE_LLAMA_PARSE",
     )
+    filingdelta_parse_provider: Literal["local", "llama_cloud"] = Field(
+        default="local",
+        alias="FILINGDELTA_PARSE_PROVIDER",
+    )
+    filingdelta_extract_provider: Literal["structured_llm", "llama_extract"] = Field(
+        default="structured_llm",
+        alias="FILINGDELTA_EXTRACT_PROVIDER",
+    )
     filingdelta_llama_parse_tier: str = Field(
-        default="agentic",
+        default="cost-effective",
         alias="FILINGDELTA_LLAMA_PARSE_TIER",
     )
     filingdelta_llama_parse_version: str = Field(
@@ -41,7 +50,7 @@ class Settings(BaseSettings):
         alias="FILINGDELTA_LLAMA_PARSE_VERSION",
     )
     filingdelta_llama_extract_tier: str = Field(
-        default="agentic",
+        default="fast",
         alias="FILINGDELTA_LLAMA_EXTRACT_TIER",
     )
     filingdelta_app_host: str = Field(
@@ -101,6 +110,8 @@ class Settings(BaseSettings):
             "llm_model": self.filingdelta_llm_model,
             "embed_model": self.filingdelta_embed_model,
             "openai_api_key_configured": bool(self.openai_api_key),
+            "parse_provider": self.filingdelta_parse_provider,
+            "extract_provider": self.filingdelta_extract_provider,
             "use_llama_parse": self.filingdelta_use_llama_parse,
             "llama_parse_configured": bool(self.llama_cloud_api_key),
             "llama_cloud_base_url_configured": bool(self.llama_cloud_base_url),

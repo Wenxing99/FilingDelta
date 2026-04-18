@@ -27,6 +27,9 @@ class FilingDocType(str, Enum):
 class ParserKind(str, Enum):
     LLAMA_PARSE = "llama_parse"
     PYMUPDF = "pymupdf"
+    HTML_TAG = "html_tag"
+    UNSTRUCTURED = "unstructured"
+    FALLBACK = "fallback"
 
 
 class FilingSource(BaseModel):

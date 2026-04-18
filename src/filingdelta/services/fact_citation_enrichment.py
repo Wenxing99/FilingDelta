@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-from filingdelta.schemas.facts import HeadlineMetricFacts
+from filingdelta.schemas.facts import ExtractedFactField, HeadlineMetricFacts
 from filingdelta.schemas.filing import Citation, ParsedFiling, ParsedPage
 
 
@@ -24,19 +24,80 @@ def enrich_headline_metric_citations(
 
     for field_name in _HEADLINE_FACT_FIELDS:
         fact_field = getattr(enriched_facts, field_name)
-        if fact_field.citations or fact_field.value is None:
+        if fact_field.value is None:
+            continue
+        if fact_field.citations:
             continue
 
-        citations = _find_citations(
+        evidence_citations = _build_citations_from_evidence(parsed_filing, fact_field)
+        if evidence_citations:
+            fact_field.citations.extend(evidence_citations)
+            continue
+
+        fallback_citations = _find_citations(
             field_name=field_name,
             parsed_filing=parsed_filing,
             candidates=_build_search_candidates(field_name, fact_field.value),
             max_results=1,
         )
-        if citations:
-            fact_field.citations.extend(citations)
+        if fallback_citations:
+            fact_field.citations.extend(fallback_citations)
 
     return enriched_facts
+
+
+def _build_citations_from_evidence(
+    parsed_filing: ParsedFiling,
+    fact_field: ExtractedFactField,
+) -> list[Citation]:
+    if not fact_field.evidence_page or not fact_field.evidence_quote:
+        return []
+
+    page = next(
+        (candidate for candidate in parsed_filing.pages if candidate.page_number == fact_field.evidence_page),
+        None,
+    )
+    if page is None:
+        return []
+
+    quote = _match_quote_on_page(page, fact_field.evidence_quote)
+    if not quote:
+        return []
+
+    return [
+        Citation(
+            document_id=parsed_filing.document.document_id,
+            source_path=parsed_filing.document.source_path,
+            page_number=page.page_number,
+            quote=quote,
+        )
+    ]
+
+
+def _match_quote_on_page(page: ParsedPage, evidence_quote: str) -> str | None:
+    normalized_quote = _normalize_for_match(evidence_quote)
+    if not normalized_quote or len(normalized_quote) < 6:
+        return None
+
+    page_text = page.markdown or page.text
+    normalized_page = _normalize_for_match(page_text)
+    if normalized_quote in normalized_page:
+        return _shorten_quote(evidence_quote)
+
+    page_lines = list(_iter_non_empty_lines(page.markdown or page.text))
+    for window_text in _iter_search_windows(page_lines, max_window_size=3):
+        normalized_window = _normalize_for_match(window_text)
+        if not normalized_window:
+            continue
+        if normalized_quote in normalized_window:
+            return _shorten_quote(window_text)
+        if (
+            normalized_window in normalized_quote
+            and len(normalized_window) >= max(12, len(normalized_quote) // 2)
+        ):
+            return _shorten_quote(window_text)
+
+    return None
 
 
 def _build_search_candidates(field_name: str, value: str | float | int) -> list[str]:
@@ -75,13 +136,13 @@ def _build_unit_candidates(value: str) -> list[str]:
     variants = [candidate]
     normalized_value = candidate.lower()
 
-    if "人民幣百萬元" in candidate or "人民币百万元" in candidate:
+    if "人民币百万元" in candidate or "人民幣百萬元" in candidate:
         variants.extend(
             [
-                "（人民幣百萬元，另有指明者除外）",
                 "（人民币百万元，另有指明者除外）",
-                "人民幣百萬元",
+                "（人民幣百萬元，另有指明者除外）",
                 "人民币百万元",
+                "人民幣百萬元",
             ]
         )
 

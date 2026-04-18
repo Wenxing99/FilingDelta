@@ -16,6 +16,14 @@ __pycache__/
 /IMG_1627.png
 /IMG_1628.png
 *.egg-info/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+/workflow_output.txt
+/*.epub
 
 data/samples/*
 !data/samples/.gitkeep

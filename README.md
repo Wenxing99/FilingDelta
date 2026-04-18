@@ -44,6 +44,32 @@ FilingDelta 第一版最重要的能力是：
 - 同时需要看多家公司的定期报告
 - 需要快速定位重点段落、关键表格和风险变化的场景
 
+## 当前 Demo 状态
+
+当前仓库已经落下了一个**在本地配好样例文档后即可运行、可演示**的第一版单文档 demo，重点证明这条主链路成立：
+
+1. 导入一份公开信披文档
+2. 运行单文档分析 workflow
+3. 生成结构化重点摘要
+4. 抽取关键财务字段并绑定出处
+5. 在三栏界面中查看原文、摘要、关键数字与 citation detail
+6. 对缺少可靠证据的结果显式标记人工复核状态
+
+当前 demo 已经实现的重点包括：
+
+- `FastAPI` 后端 demo API
+- `LlamaIndex Workflows` 单文档 workflow
+  - `Orchestrator`
+  - `Reader`
+  - `FactExtractor`
+  - `Verifier`
+- 本地 parse + structured extraction 主链路
+- `React + TypeScript + Vite` 三栏阅读界面
+- PDF 连续阅读、缩放、跳页与 citation 联动
+- `通过 / 需复核 / 失败` 的 review status 展示
+
+当前 demo 以**单文档可追溯阅读**为主；双文档 `Compare / diff` 能力仍在下一阶段推进。
+
 ## 支持的材料范围
 
 FilingDelta 当前主要面向以下公开披露材料：
@@ -54,7 +80,7 @@ FilingDelta 当前主要面向以下公开披露材料：
 
 ## 核心能力
 
-FilingDelta 当前聚焦四类核心任务：
+FilingDelta 长期聚焦四类核心任务：
 
 ### 1. 重点提取
 - 提取关键财务指标
@@ -77,6 +103,73 @@ FilingDelta 当前聚焦四类核心任务：
 - 对比不同市场之间的披露差异
 - 对比公告、年报、业绩材料之间的信息一致性
 - 标记需要人工复核的潜在异常点
+
+其中，当前公开仓库已稳定实现的是：
+
+- 单文档重点提取
+- 结论级 citation 回溯
+- 关键财务字段抽取与出处绑定
+- 单文档 review status / 人工复核提示
+
+双文档差异分析仍然属于下一步扩展。
+
+## 运行 Demo
+
+### 环境要求
+
+- Python 3.12
+- `uv`
+- Node.js `20.16+` 或 `22.3+`
+
+### 后端
+
+```bash
+uv sync --dev
+uv run uvicorn filingdelta.main:app --reload
+```
+
+### 前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+默认地址：
+
+- 前端：`http://127.0.0.1:5173`
+- 后端：`http://127.0.0.1:8000`
+
+在 Windows 本地环境下，也可以直接使用仓库根目录下的启动脚本：
+
+- `start_demo.cmd`
+- `start_backend.cmd`
+- `start_frontend.cmd`
+
+### 当前 demo 界面
+
+第一版界面采用三栏工作台：
+
+- 左栏：文档概览、关键数字、重点摘要、review status
+- 中栏：原始文档 viewer 与 citation detail
+- 右栏：后续 chatbot 的预留区域
+
+当前中栏重点支持：
+
+- PDF 连续阅读
+- 缩放与适应宽度
+- 跳页
+- 点击摘要/数字后联动查看 citation detail
+
+### 样例数据说明
+
+公开仓库默认**不附带真实样例文档**。本地 demo 依赖：
+
+- `data/raw/` 下的本地样例文件
+- `data/raw/small_doc_benchmark.json` 中登记的文档 manifest
+
+也就是说，远端克隆下来后，代码和前端都可以直接启动，但要真正看到样例文档列表并运行 demo，需要先在本地补好样例文件和对应 manifest。原始样例与解析产物默认不提交到远端仓库。
 
 ## 项目定位
 

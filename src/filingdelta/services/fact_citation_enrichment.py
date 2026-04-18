@@ -5,6 +5,13 @@ from typing import Iterable
 
 from filingdelta.schemas.facts import ExtractedFactField, HeadlineMetricFacts
 from filingdelta.schemas.filing import Citation, ParsedFiling, ParsedPage
+from filingdelta.services.citation_support import (
+    build_citation_from_evidence,
+    iter_non_empty_lines,
+    iter_search_windows,
+    normalize_for_match,
+    shorten_quote,
+)
 
 
 _HEADLINE_FACT_FIELDS = (
@@ -50,54 +57,12 @@ def _build_citations_from_evidence(
     parsed_filing: ParsedFiling,
     fact_field: ExtractedFactField,
 ) -> list[Citation]:
-    if not fact_field.evidence_page or not fact_field.evidence_quote:
-        return []
-
-    page = next(
-        (candidate for candidate in parsed_filing.pages if candidate.page_number == fact_field.evidence_page),
-        None,
+    citation = build_citation_from_evidence(
+        parsed_filing,
+        evidence_page=fact_field.evidence_page,
+        evidence_quote=fact_field.evidence_quote,
     )
-    if page is None:
-        return []
-
-    quote = _match_quote_on_page(page, fact_field.evidence_quote)
-    if not quote:
-        return []
-
-    return [
-        Citation(
-            document_id=parsed_filing.document.document_id,
-            source_path=parsed_filing.document.source_path,
-            page_number=page.page_number,
-            quote=quote,
-        )
-    ]
-
-
-def _match_quote_on_page(page: ParsedPage, evidence_quote: str) -> str | None:
-    normalized_quote = _normalize_for_match(evidence_quote)
-    if not normalized_quote or len(normalized_quote) < 6:
-        return None
-
-    page_text = page.markdown or page.text
-    normalized_page = _normalize_for_match(page_text)
-    if normalized_quote in normalized_page:
-        return _shorten_quote(evidence_quote)
-
-    page_lines = list(_iter_non_empty_lines(page.markdown or page.text))
-    for window_text in _iter_search_windows(page_lines, max_window_size=3):
-        normalized_window = _normalize_for_match(window_text)
-        if not normalized_window:
-            continue
-        if normalized_quote in normalized_window:
-            return _shorten_quote(window_text)
-        if (
-            normalized_window in normalized_quote
-            and len(normalized_window) >= max(12, len(normalized_quote) // 2)
-        ):
-            return _shorten_quote(window_text)
-
-    return None
+    return [citation] if citation else []
 
 
 def _build_search_candidates(field_name: str, value: str | float | int) -> list[str]:
@@ -194,9 +159,9 @@ def _find_citations(
     max_results: int,
 ) -> list[Citation]:
     normalized_candidates = [
-        (candidate, _normalize_for_match(candidate))
+        (candidate, normalize_for_match(candidate))
         for candidate in candidates
-        if candidate and _normalize_for_match(candidate)
+        if candidate and normalize_for_match(candidate)
     ]
     if not normalized_candidates:
         return []
@@ -205,10 +170,10 @@ def _find_citations(
 
     for page in _iter_pages_for_field(parsed_filing, field_name):
         page_text = page.markdown or page.text
-        page_lines = list(_iter_non_empty_lines(page_text))
+        page_lines = list(iter_non_empty_lines(page_text))
 
-        for window_text in _iter_search_windows(page_lines, max_window_size=3):
-            normalized_window = _normalize_for_match(window_text)
+        for window_text in iter_search_windows(page_lines, max_window_size=3):
+            normalized_window = normalize_for_match(window_text)
             if not normalized_window:
                 continue
 
@@ -219,7 +184,7 @@ def _find_citations(
                             document_id=parsed_filing.document.document_id,
                             source_path=parsed_filing.document.source_path,
                             page_number=page.page_number,
-                            quote=_shorten_quote(window_text),
+                            quote=shorten_quote(window_text),
                         )
                     )
                     break
@@ -246,38 +211,6 @@ def _iter_pages_for_field(parsed_filing: ParsedFiling, field_name: str) -> Itera
 
     yield from pages[:priority_count]
     yield from pages[priority_count:]
-
-
-def _iter_non_empty_lines(text: str) -> Iterable[str]:
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if line:
-            yield line
-
-
-def _iter_search_windows(lines: list[str], max_window_size: int) -> Iterable[str]:
-    for index, line in enumerate(lines):
-        yield line
-
-        for window_size in range(2, max_window_size + 1):
-            end_index = index + window_size
-            if end_index > len(lines):
-                break
-            yield " ".join(lines[index:end_index])
-
-
-def _normalize_for_match(text: str) -> str:
-    normalized = re.sub(r"\s+", "", text)
-    normalized = normalized.lower()
-    normalized = normalized.replace(",", "").replace("，", "")
-    normalized = normalized.replace("（", "(").replace("）", ")")
-    return normalized
-
-
-def _shorten_quote(text: str, limit: int = 240) -> str:
-    if len(text) <= limit:
-        return text
-    return f"{text[: limit - 3].rstrip()}..."
 
 
 def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:

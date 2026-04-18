@@ -39,7 +39,8 @@ class HeadlineMetricsExtractionSchema(BaseModel):
         default=None,
         description=(
             "Net profit attributable to shareholders, owners, or the parent company for the "
-            "main reporting period. Extract the numeric value only, without commas or unit text."
+            "main reporting period. Prefer the attributable measure over a generic total net "
+            "profit line. Extract the numeric value only, without commas or unit text."
         ),
     )
 

@@ -239,6 +239,13 @@ def _refine_structured_extraction(
         )
         if refined_period is not None:
             structured.fiscal_period = refined_period
+    refined_net_profit = _refine_net_profit(
+        parsed_filing=parsed_filing,
+        selection=selection,
+        current=structured.net_profit,
+    )
+    if refined_net_profit is not None:
+        structured.net_profit = refined_net_profit
     return structured
 
 
@@ -307,7 +314,104 @@ def _is_generic_fiscal_period(value: str | None) -> bool:
     if not value:
         return True
     candidate = value.strip()
-    return bool(re.fullmatch(r"\d{4}(?:年)?", candidate))
+    return bool(re.fullmatch(r"\d{4}(?:年|年度)?", candidate))
+
+
+def _refine_net_profit(
+    *,
+    parsed_filing: ParsedFiling,
+    selection: object,
+    current: NumericFactEvidence,
+) -> NumericFactEvidence | None:
+    candidate_pages = getattr(selection, "pages_for")("net_profit")
+    page_lookup = {page.page_number: page for page in parsed_filing.pages}
+
+    for page_number in candidate_pages:
+        page = page_lookup.get(page_number)
+        if not page:
+            continue
+        page_text = page.markdown or page.text
+        for window_text in _iter_text_windows(page_text):
+            extracted = _extract_attributable_net_profit(window_text)
+            if extracted is None:
+                continue
+            value, quote = extracted
+            if current.value is not None and _numeric_equal(current.value, value):
+                return NumericFactEvidence(
+                    value=current.value,
+                    evidence_page=page_number,
+                    evidence_quote=quote,
+                    confidence=max(current.confidence or 0.0, 0.98),
+                )
+            return NumericFactEvidence(
+                value=value,
+                evidence_page=page_number,
+                evidence_quote=quote,
+                confidence=max(current.confidence or 0.0, 0.98),
+            )
+
+    return None
+
+
+def _iter_text_windows(text: str) -> list[str]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    windows: list[str] = []
+    for index, line in enumerate(lines):
+        windows.append(line)
+        if index + 1 < len(lines):
+            windows.append(f"{line} {lines[index + 1]}")
+    return windows
+
+
+def _extract_attributable_net_profit(text: str) -> tuple[float, str] | None:
+    excluded_markers = (
+        "扣除非经常性损益后",
+        "扣除非经常性损益後",
+        "excluding non-recurring",
+        "excluding nonrecurring",
+    )
+    patterns = (
+        r"(归属于本行股东的净利润[^\n]{0,80})",
+        r"(归属于母公司股东的净利润[^\n]{0,80})",
+        r"(归属于本公司股东的净利润[^\n]{0,80})",
+        r"(归属于普通股股东的净利润[^\n]{0,80})",
+        r"(归属于本行普通股股东的净利润[^\n]{0,80})",
+        r"(本公司权益持有人应占盈利[^\n]{0,80})",
+        r"(本公司权益持有人應佔盈利[^\n]{0,80})",
+        r"(profit attributable to [^\n]{0,80})",
+        r"(net income attributable to [^\n]{0,80})",
+    )
+
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        quote = match.group(1).strip()
+        prefix = text[max(0, match.start() - 24) : match.start()]
+        lower_quote = quote.lower()
+        lower_prefix = prefix.lower()
+        if any(
+            marker in quote
+            or marker in lower_quote
+            or marker in prefix
+            or marker in lower_prefix
+            for marker in excluded_markers
+        ):
+            continue
+        value_match = re.search(r"-?\d[\d,]*(?:\.\d+)?", quote)
+        if not value_match:
+            continue
+        try:
+            return float(value_match.group(0).replace(",", "")), quote
+        except ValueError:
+            continue
+    return None
+
+
+def _numeric_equal(left: float | None, right: float | None) -> bool:
+    if left is None or right is None:
+        return False
+    return abs(float(left) - float(right)) < 1e-9
 
 
 def _normalize_for_match(text: str) -> str:

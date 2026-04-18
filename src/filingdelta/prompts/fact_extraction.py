@@ -15,6 +15,7 @@ Output rules:
 - `evidence_quote` must be a short verbatim quote copied from the same page.
 - For numeric fields, return only the numeric value without commas or unit text.
 - Prefer cover pages, financial highlights, summary tables, and result tables over narrative prose when both are available.
+- For `net_profit`, prefer the attributable measure over a generic total net profit measure.
 
 Field guidance:
 - `company_name`: the official company name shown in the filing.
@@ -22,6 +23,7 @@ Field guidance:
 - `unit`: the unit for the headline financial figures, such as RMB million or 人民币百万元.
 - `revenue`: the total operating revenue / total revenues for the main reporting period.
 - `net_profit`: net profit attributable to shareholders / owners / parent company for the main reporting period.
+- Do not use a generic "net profit" line if an attributable net profit line is present on the supplied pages.
 
 Filing hints:
 - company_name_hint: {company_name}

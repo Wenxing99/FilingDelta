@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=REPO_ROOT / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
+
+    filingdelta_llm_model: str = Field(
+        default="gpt-5.4-nano",
+        alias="FILINGDELTA_LLM_MODEL",
+    )
+    filingdelta_embed_model: str = Field(
+        default="text-embedding-3-small",
+        alias="FILINGDELTA_EMBED_MODEL",
+    )
+    filingdelta_use_llama_parse: bool = Field(
+        default=True,
+        alias="FILINGDELTA_USE_LLAMA_PARSE",
+    )
+    filingdelta_llama_parse_tier: str = Field(
+        default="agentic",
+        alias="FILINGDELTA_LLAMA_PARSE_TIER",
+    )
+    filingdelta_llama_parse_version: str = Field(
+        default="latest",
+        alias="FILINGDELTA_LLAMA_PARSE_VERSION",
+    )
+    filingdelta_llama_extract_tier: str = Field(
+        default="agentic",
+        alias="FILINGDELTA_LLAMA_EXTRACT_TIER",
+    )
+    filingdelta_app_host: str = Field(
+        default="127.0.0.1",
+        alias="FILINGDELTA_APP_HOST",
+    )
+    filingdelta_app_port: int = Field(
+        default=8000,
+        alias="FILINGDELTA_APP_PORT",
+    )
+    filingdelta_qdrant_path: str = Field(
+        default="./data/indexes/qdrant",
+        alias="FILINGDELTA_QDRANT_PATH",
+    )
+
+    llama_cloud_api_key: str | None = Field(
+        default=None,
+        alias="LLAMA_CLOUD_API_KEY",
+    )
+
+    @property
+    def app_name(self) -> str:
+        return "FilingDelta"
+
+    @property
+    def qdrant_path(self) -> Path:
+        return (REPO_ROOT / self.filingdelta_qdrant_path).resolve()
+
+    def require_openai_api_key(self) -> str:
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required for model and embedding calls.")
+        return self.openai_api_key
+
+    def require_llama_cloud_api_key(self) -> str:
+        if not self.llama_cloud_api_key:
+            raise ValueError(
+                "LLAMA_CLOUD_API_KEY is required for LlamaParse and LlamaExtract calls."
+            )
+        return self.llama_cloud_api_key
+
+    def safe_summary(self) -> dict[str, object]:
+        return {
+            "app_name": self.app_name,
+            "llm_model": self.filingdelta_llm_model,
+            "embed_model": self.filingdelta_embed_model,
+            "openai_api_key_configured": bool(self.openai_api_key),
+            "use_llama_parse": self.filingdelta_use_llama_parse,
+            "llama_parse_configured": bool(self.llama_cloud_api_key),
+            "llama_parse_tier": self.filingdelta_llama_parse_tier,
+            "llama_extract_tier": self.filingdelta_llama_extract_tier,
+            "openai_base_url_configured": bool(self.openai_base_url),
+            "qdrant_path": str(self.qdrant_path),
+        }
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

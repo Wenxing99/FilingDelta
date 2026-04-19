@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 
 import { AnalysisProgressCard } from "../features/analysis/AnalysisProgressCard";
@@ -41,6 +41,12 @@ export default function App() {
   const [chatColumnWidth, setChatColumnWidth] = useState(300);
   const [isResizingColumns, setIsResizingColumns] = useState(false);
   const [workspaceWidth, setWorkspaceWidth] = useState(0);
+
+  const clearResizeState = useCallback(() => {
+    resizeStateRef.current = null;
+    setIsResizingColumns(false);
+    document.body.style.cursor = "";
+  }, []);
 
   const selectedDocument = useMemo(
     () => documents.find((item) => item.document_id === selectedDocumentId) ?? null,
@@ -202,20 +208,33 @@ export default function App() {
     };
 
     const handlePointerUp = () => {
-      resizeStateRef.current = null;
-      setIsResizingColumns(false);
+      clearResizeState();
+    };
+
+    const handleWindowBlur = () => {
+      clearResizeState();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        clearResizeState();
+      }
     };
 
     window.addEventListener("mousemove", handlePointerMove);
     window.addEventListener("mouseup", handlePointerUp);
+    window.addEventListener("blur", handleWindowBlur);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     document.body.style.cursor = "col-resize";
 
     return () => {
       window.removeEventListener("mousemove", handlePointerMove);
       window.removeEventListener("mouseup", handlePointerUp);
+      window.removeEventListener("blur", handleWindowBlur);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       document.body.style.cursor = "";
     };
-  }, [isResizingColumns]);
+  }, [clearResizeState, isResizingColumns]);
 
   function handleResizeStart(side: "left" | "right", event: ReactMouseEvent<HTMLDivElement>) {
     event.preventDefault();

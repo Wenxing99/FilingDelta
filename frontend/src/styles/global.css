@@ -172,6 +172,12 @@ button {
 .progress-message,
 .viewer-column__hint {
   color: var(--muted);
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: right;
 }
 
 .progress-shell {
@@ -261,6 +267,10 @@ button {
   overflow: hidden;
 }
 
+.workspace > * {
+  min-width: 0;
+}
+
 .workspace--resizing {
   cursor: col-resize;
   user-select: none;
@@ -271,6 +281,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   padding-right: 4px;
@@ -318,7 +329,9 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 8px;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
 }
 
 .viewer-column__header {
@@ -326,10 +339,15 @@ button {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  min-width: 0;
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: var(--panel);
+}
+
+.viewer-column__header > * {
+  min-width: 0;
 }
 
 .viewer-column__header--compact {
@@ -339,10 +357,16 @@ button {
 .viewer-column__header h2 {
   margin: 2px 0 0;
   font-size: 1rem;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .viewer-stage {
+  min-width: 0;
   min-height: 0;
+  max-width: 100%;
   border: 1px solid var(--border);
   border-radius: 20px;
   background: var(--panel-strong);
@@ -364,8 +388,10 @@ button {
 .pdf-viewer {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 .pdf-viewer__toolbar {
@@ -373,18 +399,29 @@ button {
   justify-content: space-between;
   gap: 12px;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   border-bottom: 1px solid var(--border);
   padding: 8px 10px;
   background: rgba(255, 255, 255, 0.94);
+  overflow: hidden;
 }
 
 .pdf-viewer__status {
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .pdf-viewer__status span {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
   color: var(--muted);
   font-size: 0.84rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .pdf-viewer__controls {
@@ -392,6 +429,8 @@ button {
   gap: 10px;
   align-items: center;
   flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
   padding-bottom: 2px;
 }
@@ -440,6 +479,7 @@ button {
 
 .pdf-viewer__canvas-shell {
   min-height: 0;
+  max-width: 100%;
   overflow: auto;
   background:
     linear-gradient(180deg, rgba(248, 249, 252, 0.95), rgba(239, 243, 247, 0.98));
@@ -455,6 +495,8 @@ button {
   flex-direction: column;
   align-items: center;
   gap: 20px;
+  min-width: 0;
+  width: 100%;
   min-height: 100%;
 }
 
@@ -786,14 +828,18 @@ button {
 }
 
 .citation-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, auto) minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
+  min-width: 0;
+  max-width: 100%;
   min-height: 52px;
   border: 1px solid rgba(15, 118, 110, 0.16);
   border-radius: 16px;
   padding: 8px 12px;
   background: linear-gradient(180deg, rgba(241, 249, 248, 0.96), rgba(232, 244, 243, 0.94));
+  overflow: hidden;
 }
 
 .citation-bar--empty {
@@ -804,20 +850,26 @@ button {
 }
 
 .citation-bar__title {
-  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 0.86rem;
 }
 
 .citation-bar__page {
-  flex: 0 0 auto;
+  min-width: 0;
   color: var(--muted);
   font-size: 0.84rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .citation-bar__quote {
   margin: 0;
   min-width: 0;
-  flex: 1 1 auto;
+  max-width: 100%;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1031,5 +1083,9 @@ button {
 
   .citation-bar__quote {
     white-space: normal;
+  }
+
+  .viewer-column__hint {
+    text-align: left;
   }
 }

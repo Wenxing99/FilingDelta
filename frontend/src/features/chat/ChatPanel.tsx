@@ -1,7 +1,7 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { askDemoChat } from "../../lib/api";
-import type { CitationTarget, ChatCitation, ChatResponse, DemoDocument } from "../../lib/types";
+import type { ChatCitation, ChatResponse, CitationTarget, DemoDocument } from "../../lib/types";
 
 type ChatPanelProps = {
   document: DemoDocument | null;
@@ -20,16 +20,40 @@ type ChatThreadMessage = {
   isError?: boolean;
 };
 
+type ChatSessionState = {
+  sessionId: string;
+  messages: ChatThreadMessage[];
+};
+
 export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
-  const [messages, setMessages] = useState<ChatThreadMessage[]>([]);
+  const [sessions, setSessions] = useState<Record<string, ChatSessionState>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const currentDocumentId = document?.document_id ?? null;
+  const activeSession = currentDocumentId ? sessions[currentDocumentId] : null;
+  const messages = activeSession?.messages ?? [];
+
   useEffect(() => {
+    if (!currentDocumentId) {
+      setDraft("");
+      return;
+    }
+    setSessions((current) => {
+      if (current[currentDocumentId]) {
+        return current;
+      }
+      return {
+        ...current,
+        [currentDocumentId]: {
+          sessionId: createSessionId(),
+          messages: [],
+        },
+      };
+    });
     setDraft("");
-    setMessages([]);
-  }, [document?.document_id]);
+  }, [currentDocumentId]);
 
   useEffect(() => {
     const bodyNode = bodyRef.current;
@@ -48,7 +72,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
 
   async function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
-    if (!document || isSubmitting) {
+    if (!document || !activeSession || isSubmitting) {
       return;
     }
 
@@ -68,13 +92,12 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     };
     const pendingMessageId = `${Date.now()}-assistant`;
 
-    setMessages((current) => [
-      ...current,
+    appendMessages(document.document_id, [
       userMessage,
       {
         id: pendingMessageId,
         role: "assistant",
-        content: "正在按问题类型规划证据源，并生成回答...",
+        content: "正在结合当前文档与对话上下文生成回答...",
         sections: [],
         citations: [],
         route: null,
@@ -86,40 +109,44 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     setIsSubmitting(true);
 
     try {
-      const response = await askDemoChat(document.document_id, question);
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === pendingMessageId
-            ? {
-                id: pendingMessageId,
-                role: "assistant",
-                content: response.answer,
-                sections: response.sections,
-                citations: response.citations,
-                route: response.route,
-                retrievalMode: response.retrieval_mode,
-              }
-            : message,
-        ),
-      );
+      const response = await askDemoChat(document.document_id, activeSession.sessionId, question);
+      setSessions((current) => {
+        const currentSession = current[document.document_id];
+        if (!currentSession) {
+          return current;
+        }
+        return {
+          ...current,
+          [document.document_id]: {
+            sessionId: response.session_id,
+            messages: currentSession.messages.map((message) =>
+              message.id === pendingMessageId
+                ? {
+                    id: pendingMessageId,
+                    role: "assistant",
+                    content: response.answer,
+                    sections: response.sections,
+                    citations: response.citations,
+                    route: response.route,
+                    retrievalMode: response.retrieval_mode,
+                  }
+                : message,
+            ),
+          },
+        };
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "问答请求失败。";
-      setMessages((current) =>
-        current.map((item) =>
-          item.id === pendingMessageId
-            ? {
-                id: pendingMessageId,
-                role: "assistant",
-                content: message,
-                sections: [],
-                citations: [],
-                route: null,
-                retrievalMode: null,
-                isError: true,
-              }
-            : item,
-        ),
-      );
+      replacePendingMessage(document.document_id, pendingMessageId, {
+        id: pendingMessageId,
+        role: "assistant",
+        content: message,
+        sections: [],
+        citations: [],
+        route: null,
+        retrievalMode: null,
+        isError: true,
+      });
     } finally {
       setIsSubmitting(false);
     }
@@ -130,6 +157,52 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       event.preventDefault();
       void handleSubmit();
     }
+  }
+
+  function appendMessages(documentId: string, newMessages: ChatThreadMessage[]) {
+    setSessions((current) => {
+      const currentSession = current[documentId] ?? {
+        sessionId: createSessionId(),
+        messages: [],
+      };
+      return {
+        ...current,
+        [documentId]: {
+          ...currentSession,
+          messages: [...currentSession.messages, ...newMessages],
+        },
+      };
+    });
+  }
+
+  function replacePendingMessage(documentId: string, pendingId: string, nextMessage: ChatThreadMessage) {
+    setSessions((current) => {
+      const currentSession = current[documentId];
+      if (!currentSession) {
+        return current;
+      }
+      return {
+        ...current,
+        [documentId]: {
+          ...currentSession,
+          messages: currentSession.messages.map((message) => (message.id === pendingId ? nextMessage : message)),
+        },
+      };
+    });
+  }
+
+  function handleClearConversation() {
+    if (!currentDocumentId) {
+      return;
+    }
+    setSessions((current) => ({
+      ...current,
+      [currentDocumentId]: {
+        sessionId: createSessionId(),
+        messages: [],
+      },
+    }));
+    setDraft("");
   }
 
   function renderRetrievalMode(mode: ChatResponse["retrieval_mode"] | null): string | null {
@@ -161,13 +234,23 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
           <p className="panel-card__kicker">Ask Filing</p>
           <h3>对话问答</h3>
         </div>
-        <span className="status-chip status-chip--muted">{helperBadge}</span>
+        <div className="chat-shell__header-actions">
+          <span className="status-chip status-chip--muted">{helperBadge}</span>
+          <button
+            type="button"
+            className="secondary-button secondary-button--compact"
+            onClick={handleClearConversation}
+            disabled={!document || isSubmitting}
+          >
+            清空对话
+          </button>
+        </div>
       </div>
 
       <div ref={bodyRef} className="chat-shell__body">
         {messages.length === 0 ? (
           <div className="chat-empty">
-            <p>系统会先判断问题类型，再组合文档证据与外部来源生成回答。</p>
+            <p>系统会先结合当前文档与最近对话，再判断问题类型、检索证据并生成回答。</p>
           </div>
         ) : (
           <div className="chat-thread">
@@ -243,7 +326,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
         <textarea
           className="chat-shell__input"
           rows={4}
-          placeholder={document ? "例如：优先股是什么？它和这份报告的披露信息意味着什么？" : "先选择一份文档，再开始问答。"}
+          placeholder={document ? "例如：优先股是什么？它和这份报告里的披露意味着什么？" : "先选择一份文档，再开始问答。"}
           value={draft}
           disabled={!document || isSubmitting}
           onChange={(event) => setDraft(event.target.value)}
@@ -259,4 +342,11 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       </form>
     </section>
   );
+}
+
+function createSessionId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `chat-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }

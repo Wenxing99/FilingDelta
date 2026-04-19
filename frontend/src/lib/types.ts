@@ -150,6 +150,7 @@ export type ChatAnswerSection = {
 
 export type ChatResponse = {
   document_id: string;
+  session_id: string;
   question: string;
   answer: string;
   route: "document_only" | "concept_only" | "mixed" | "unsupported";

@@ -148,6 +148,13 @@ button {
   color: var(--muted);
 }
 
+.secondary-button--compact {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: 0.8rem;
+}
+
 .status-panel {
   padding: 16px 20px;
   border: 1px solid var(--border);
@@ -1055,6 +1062,13 @@ button {
   justify-content: space-between;
   gap: 10px;
   align-items: center;
+}
+
+.chat-shell__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .chat-shell__input {

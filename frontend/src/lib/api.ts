@@ -76,11 +76,12 @@ export async function rerunDemoRunFeedback(
   return payload.run;
 }
 
-export async function askDemoChat(documentId: string, question: string): Promise<ChatResponse> {
+export async function askDemoChat(documentId: string, sessionId: string, question: string): Promise<ChatResponse> {
   const payload = await requestJson<{ response: ChatResponse }>("/api/demo/chat", {
     method: "POST",
     body: JSON.stringify({
       document_id: documentId,
+      session_id: sessionId,
       question,
     }),
   });

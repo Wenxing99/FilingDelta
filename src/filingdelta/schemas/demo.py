@@ -40,6 +40,7 @@ class DemoRunFeedbackActionRequest(BaseModel):
 
 class DemoChatRequest(BaseModel):
     document_id: str
+    session_id: str | None = Field(default=None, min_length=1, max_length=200)
     question: str = Field(min_length=1, max_length=1000)
 
 

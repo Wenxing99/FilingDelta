@@ -119,6 +119,7 @@ async def demo_chat(payload: DemoChatRequest) -> DemoChatResponse:
         response = await service.ask(
             document_id=payload.document_id,
             source=source,
+            session_id=payload.session_id,
             question=payload.question,
         )
     except ValueError as error:

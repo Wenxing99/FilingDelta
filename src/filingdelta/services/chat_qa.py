@@ -4,10 +4,13 @@ import asyncio
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from qdrant_client import QdrantClient
 
 from filingdelta.agents.answerer import AnswererAgent
+from filingdelta.agents.chat_contextualizer import ChatContextualizerAgent
+from filingdelta.agents.chat_memory_summarizer import ChatMemorySummarizerAgent
 from filingdelta.agents.chat_planner import ChatPlannerAgent
 from filingdelta.agents.chat_router import ChatRouterAgent
 from filingdelta.core.config import Settings, get_settings
@@ -18,12 +21,15 @@ from filingdelta.schemas.chat import (
     ChatAnswer,
     ChatAnswerSection,
     ChatCitation,
+    ChatContextualization,
     ChatPlan,
     ChatRouteDecision,
+    ChatSessionState,
     ExternalEvidenceResult,
     RetrievedChunk,
 )
 from filingdelta.schemas.filing import FilingChunk, FilingSource, ParsedFiling
+from filingdelta.services.chat_memory import ChatMemoryStore
 from filingdelta.services.external_search import ExternalSearchError, ExternalSearchService
 
 
@@ -74,6 +80,9 @@ class ChatQAService:
         self._pipeline = FilingIngestionPipeline(settings=self._settings)
         self._indexer = DocumentChunkIndexer(settings=self._settings, client=self._qdrant_client)
         self._retriever = DocumentChunkRetriever(settings=self._settings, client=self._qdrant_client)
+        self._memory = ChatMemoryStore()
+        self._contextualizer = ChatContextualizerAgent(settings=self._settings)
+        self._memory_summarizer = ChatMemorySummarizerAgent(settings=self._settings)
         self._router = ChatRouterAgent(settings=self._settings)
         self._planner = ChatPlannerAgent(settings=self._settings)
         self._external_search = ExternalSearchService(settings=self._settings)
@@ -87,24 +96,59 @@ class ChatQAService:
         document_id: str,
         source: FilingSource,
         question: str,
+        session_id: str | None = None,
     ) -> ChatAnswer:
         question_text = question.strip()
         if not question_text:
             raise ValueError("Question must not be empty.")
+        active_session_id = (session_id or f"{document_id}-{uuid4()}").strip()
+        if not active_session_id:
+            raise ValueError("Session ID must not be empty.")
 
         bundle = await self._ensure_document_bundle(document_id=document_id, source=source)
+        session_state = await self._memory.get_or_create(
+            document_id=document_id,
+            session_id=active_session_id,
+        )
+        try:
+            contextualization = await self._contextualizer.contextualize(
+                question=question_text,
+                document=bundle.parsed_filing.document,
+                recent_messages=session_state.recent_messages,
+                conversation_summary=session_state.conversation_summary,
+            )
+        except Exception:
+            contextualization = ChatContextualization(
+                standalone_question=question_text,
+                used_memory=False,
+            )
+        effective_question = _resolve_effective_question(
+            original_question=question_text,
+            contextualization=contextualization,
+        )
         route_decision = await self._router.route(
-            question=question_text,
+            question=effective_question,
             document=bundle.parsed_filing.document,
         )
         plan = await self._build_plan(
-            question=question_text,
+            question=effective_question,
             document=bundle.parsed_filing.document,
             route_decision=route_decision,
         )
 
         if route_decision.route == "unsupported":
-            return _build_unsupported_answer(document_id=document_id, question=question_text)
+            answer = _build_unsupported_answer(
+                document_id=document_id,
+                session_id=active_session_id,
+                question=question_text,
+            )
+            await self._record_conversation_turn(
+                session_state=session_state,
+                document=bundle.parsed_filing.document,
+                user_question=question_text,
+                assistant_answer=answer.answer,
+            )
+            return answer
 
         retrieved_chunks: list[RetrievedChunk] = []
         document_retrieval_mode: str | None = None
@@ -133,14 +177,23 @@ class ChatQAService:
                 external_error = str(error)
 
         if route_decision.route == "concept_only" and external_result is None:
-            return _build_external_failure_answer(
+            answer = _build_external_failure_answer(
                 document_id=document_id,
+                session_id=active_session_id,
                 question=question_text,
                 error_message=external_error or "External search is unavailable.",
             )
+            await self._record_conversation_turn(
+                session_state=session_state,
+                document=bundle.parsed_filing.document,
+                user_question=question_text,
+                assistant_answer=answer.answer,
+            )
+            return answer
 
         answer_draft = await self._answerer.answer(
             question=question_text,
+            standalone_question=effective_question,
             document=bundle.parsed_filing.document,
             route_decision=route_decision,
             plan=plan,
@@ -162,8 +215,9 @@ class ChatQAService:
             external_citations=external_result.citations if external_result else [],
         )
 
-        return ChatAnswer(
+        answer = ChatAnswer(
             document_id=document_id,
+            session_id=active_session_id,
             question=question_text,
             answer=answer_draft.answer.strip(),
             route=route_decision.route,
@@ -175,6 +229,13 @@ class ChatQAService:
                 has_external_result=external_result is not None,
             ),
         )
+        await self._record_conversation_turn(
+            session_state=session_state,
+            document=bundle.parsed_filing.document,
+            user_question=question_text,
+            assistant_answer=answer.answer,
+        )
+        return answer
 
     async def _ensure_document_bundle(
         self,
@@ -236,6 +297,36 @@ class ChatQAService:
         )
         return _normalize_plan(planned, question=question, route_decision=route_decision)
 
+    async def _record_conversation_turn(
+        self,
+        *,
+        session_state: ChatSessionState,
+        document,
+        user_question: str,
+        assistant_answer: str,
+    ) -> None:
+        updated_session = await self._memory.append_turn(
+            document_id=session_state.document_id,
+            session_id=session_state.session_id,
+            user_message=user_question,
+            assistant_message=assistant_answer,
+        )
+        try:
+            summary = await self._memory_summarizer.summarize(
+                document=document,
+                existing_summary=updated_session.conversation_summary,
+                recent_messages=updated_session.recent_messages,
+                user_question=user_question,
+                assistant_answer=assistant_answer,
+            )
+            await self._memory.replace_summary(
+                document_id=session_state.document_id,
+                session_id=session_state.session_id,
+                summary=summary,
+            )
+        except Exception:
+            return
+
 
 _chat_qa_service: ChatQAService | None = None
 
@@ -268,6 +359,17 @@ def _normalize_plan(
             else "concept"
         )
     return plan
+
+
+def _resolve_effective_question(
+    *,
+    original_question: str,
+    contextualization: ChatContextualization,
+) -> str:
+    candidate = contextualization.standalone_question.strip()
+    if not candidate:
+        return original_question
+    return candidate
 
 
 def _merge_keyword_fallback(
@@ -439,9 +541,10 @@ def _resolve_retrieval_mode(
     return "semantic_with_filters"
 
 
-def _build_unsupported_answer(*, document_id: str, question: str) -> ChatAnswer:
+def _build_unsupported_answer(*, document_id: str, session_id: str, question: str) -> ChatAnswer:
     return ChatAnswer(
         document_id=document_id,
+        session_id=session_id,
         question=question,
         answer="这个问题超出了当前演示系统的文档问答与概念解释范围。",
         route="unsupported",
@@ -459,11 +562,13 @@ def _build_unsupported_answer(*, document_id: str, question: str) -> ChatAnswer:
 def _build_external_failure_answer(
     *,
     document_id: str,
+    session_id: str,
     question: str,
     error_message: str,
 ) -> ChatAnswer:
     return ChatAnswer(
         document_id=document_id,
+        session_id=session_id,
         question=question,
         answer="这个问题需要外部概念解释，但当前外部检索暂时不可用。",
         route="concept_only",

@@ -36,6 +36,31 @@ class ChatPlan(BaseModel):
     ] = "none"
 
 
+class ChatConversationMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ConversationSummary(BaseModel):
+    summary_text: str = ""
+    discussed_terms: list[str] = Field(default_factory=list)
+    confirmed_facts: list[str] = Field(default_factory=list)
+    open_questions: list[str] = Field(default_factory=list)
+
+
+class ChatSessionState(BaseModel):
+    session_id: str
+    document_id: str
+    recent_messages: list[ChatConversationMessage] = Field(default_factory=list)
+    conversation_summary: ConversationSummary = Field(default_factory=ConversationSummary)
+
+
+class ChatContextualization(BaseModel):
+    standalone_question: str
+    used_memory: bool = False
+    resolved_references: list[str] = Field(default_factory=list)
+
+
 class ChatSynthesisDraft(BaseModel):
     answer: str
     document_evidence: list[str] = Field(default_factory=list)
@@ -72,6 +97,7 @@ class ChatAnswerSection(BaseModel):
 
 class ChatAnswer(BaseModel):
     document_id: str
+    session_id: str
     question: str
     answer: str
     route: Literal["document_only", "concept_only", "mixed", "unsupported"] = "document_only"

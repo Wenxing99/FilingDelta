@@ -23,6 +23,7 @@ class AnswererAgent:
         self,
         *,
         question: str,
+        standalone_question: str,
         document: FilingDocument,
         route_decision: ChatRouteDecision,
         plan: ChatPlan,
@@ -46,6 +47,7 @@ class AnswererAgent:
             route=route_decision.route,
             analysis_mode=plan.analysis_mode,
             question=question,
+            standalone_question=standalone_question,
             retrieved_context=retrieved_context,
             external_context=external_context or "No external evidence was provided.",
         )

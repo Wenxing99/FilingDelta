@@ -22,6 +22,7 @@ Rules:
 - Only return document refs that appear in the provided document context.
 - Only return external refs that appear in the provided external context.
 - If a lane has no support, return an empty list for that lane.
+- Answer the user's current question, but use the standalone question to resolve omitted references and make retrieval-grounded reasoning explicit.
 
 Structure guidance:
 - For document_only:
@@ -49,8 +50,11 @@ Route:
 - route: {route}
 - analysis_mode: {analysis_mode}
 
-Question:
+User's current question:
 {question}
+
+Standalone question for retrieval and reasoning:
+{standalone_question}
 
 Document evidence:
 {retrieved_context}

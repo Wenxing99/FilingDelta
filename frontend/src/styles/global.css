@@ -987,6 +987,35 @@ button {
   white-space: pre-wrap;
 }
 
+.chat-message__sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-message__section {
+  border-top: 1px solid rgba(20, 33, 45, 0.08);
+  padding-top: 10px;
+}
+
+.chat-message__section h4 {
+  margin: 0 0 6px;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.chat-message__section ul {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-message__section li {
+  color: var(--ink);
+}
+
 .chat-message__citations {
   display: flex;
   flex-wrap: wrap;
@@ -1000,6 +1029,19 @@ button {
   background: rgba(15, 118, 110, 0.08);
   color: var(--accent);
   padding: 0 10px;
+}
+
+.chat-citation-chip--external {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  text-decoration: none;
+  background: rgba(20, 33, 45, 0.06);
+  border-color: rgba(20, 33, 45, 0.12);
+  color: var(--ink);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .chat-shell__composer {

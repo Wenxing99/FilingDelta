@@ -12,7 +12,9 @@ type ChatThreadMessage = {
   id: string;
   role: "user" | "assistant";
   content: string;
+  sections: ChatResponse["sections"];
   citations: ChatCitation[];
+  route: ChatResponse["route"] | null;
   retrievalMode: ChatResponse["retrieval_mode"] | null;
   isPending?: boolean;
   isError?: boolean;
@@ -41,7 +43,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     if (!document) {
       return "Select document";
     }
-    return "RAG beta";
+    return "Mixed QA beta";
   }, [document]);
 
   async function handleSubmit(event?: FormEvent<HTMLFormElement>) {
@@ -59,7 +61,9 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       id: `${Date.now()}-user`,
       role: "user",
       content: question,
+      sections: [],
       citations: [],
+      route: null,
       retrievalMode: null,
     };
     const pendingMessageId = `${Date.now()}-assistant`;
@@ -70,8 +74,10 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       {
         id: pendingMessageId,
         role: "assistant",
-        content: "正在检索当前文档并生成回答...",
+        content: "正在按问题类型规划证据源，并生成回答...",
+        sections: [],
         citations: [],
+        route: null,
         retrievalMode: null,
         isPending: true,
       },
@@ -88,7 +94,9 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
                 id: pendingMessageId,
                 role: "assistant",
                 content: response.answer,
+                sections: response.sections,
                 citations: response.citations,
+                route: response.route,
                 retrievalMode: response.retrieval_mode,
               }
             : message,
@@ -103,7 +111,9 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
                 id: pendingMessageId,
                 role: "assistant",
                 content: message,
+                sections: [],
                 citations: [],
+                route: null,
                 retrievalMode: null,
                 isError: true,
               }
@@ -126,11 +136,20 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     if (!mode) {
       return null;
     }
-    if (mode === "semantic_with_filters_and_keyword_fallback") {
-      return "语义检索 + 关键词补充";
-    }
     if (mode === "semantic_with_keyword_fallback") {
       return "关键词回退";
+    }
+    if (mode === "external_web_search") {
+      return "外部检索";
+    }
+    if (mode === "external_search_unavailable") {
+      return "外部检索不可用";
+    }
+    if (mode === "mixed_document_external") {
+      return "Mixed QA";
+    }
+    if (mode === "unsupported") {
+      return "超出范围";
     }
     return "语义检索";
   }
@@ -148,7 +167,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       <div ref={bodyRef} className="chat-shell__body">
         {messages.length === 0 ? (
           <div className="chat-empty">
-            <p>基于当前文档提问，系统会先检索相关 chunk，再生成带 citation 的回答。</p>
+            <p>系统会先判断问题类型，再组合文档证据与外部来源生成回答。</p>
           </div>
         ) : (
           <div className="chat-thread">
@@ -165,26 +184,53 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
                 </div>
                 <p className="chat-message__content">{message.content}</p>
 
+                {message.sections.length > 0 ? (
+                  <div className="chat-message__sections">
+                    {message.sections.map((section) => (
+                      <section key={`${message.id}:${section.section_type}`} className="chat-message__section">
+                        <h4>{section.title}</h4>
+                        <ul>
+                          {section.items.map((item, index) => (
+                            <li key={`${message.id}:${section.section_type}:${index}`}>{item}</li>
+                          ))}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
+                ) : null}
+
                 {message.citations.length > 0 ? (
                   <div className="chat-message__citations">
-                    {message.citations.map((citation, index) => (
-                      <button
-                        key={`${message.id}:${citation.citation_id}:${index}`}
-                        type="button"
-                        className="chat-citation-chip"
-                        onClick={() =>
-                          onSelectCitation({
-                            kind: "chat",
-                            id: `chat:${message.id}:${citation.citation_id}`,
-                            title: `问答引用 ${index + 1}`,
-                            page: citation.page_number,
-                            quote: citation.quote,
-                          })
-                        }
-                      >
-                        {citation.page_number ? `第 ${citation.page_number} 页` : "引用"}
-                      </button>
-                    ))}
+                    {message.citations.map((citation, index) =>
+                      citation.source_type === "document" ? (
+                        <button
+                          key={`${message.id}:${citation.citation_id}:${index}`}
+                          type="button"
+                          className="chat-citation-chip"
+                          onClick={() =>
+                            onSelectCitation({
+                              kind: "chat",
+                              id: `chat:${message.id}:${citation.citation_id}`,
+                              title: `问答引用 ${index + 1}`,
+                              page: citation.page_number,
+                              quote: citation.quote,
+                            })
+                          }
+                        >
+                          {citation.page_number ? `第 ${citation.page_number} 页` : "文档引用"}
+                        </button>
+                      ) : (
+                        <a
+                          key={`${message.id}:${citation.citation_id}:${index}`}
+                          className="chat-citation-chip chat-citation-chip--external"
+                          href={citation.url || "#"}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {citation.title || "外部来源"}
+                        </a>
+                      ),
+                    )}
                   </div>
                 ) : null}
               </article>
@@ -197,11 +243,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
         <textarea
           className="chat-shell__input"
           rows={4}
-          placeholder={
-            document
-              ? "例如：这份报告里对股息是怎么说的？"
-              : "先选择一份文档，再开始问答。"
-          }
+          placeholder={document ? "例如：优先股是什么？它和这份报告的披露信息意味着什么？" : "先选择一份文档，再开始问答。"}
           value={draft}
           disabled={!document || isSubmitting}
           onChange={(event) => setDraft(event.target.value)}

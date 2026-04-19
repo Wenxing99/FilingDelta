@@ -134,22 +134,32 @@ export type CitationTarget =
 
 export type ChatCitation = {
   citation_id: string;
-  chunk_id: string;
-  document_id: string;
-  source_path: string;
+  source_type: "document" | "external";
   page_number: number | null;
   quote: string;
-  score: number | null;
+  url: string | null;
+  title: string | null;
+  snippet: string | null;
+};
+
+export type ChatAnswerSection = {
+  section_type: "document_evidence" | "external_evidence" | "analysis_and_limits";
+  title: string;
+  items: string[];
 };
 
 export type ChatResponse = {
   document_id: string;
   question: string;
   answer: string;
+  route: "document_only" | "concept_only" | "mixed" | "unsupported";
+  sections: ChatAnswerSection[];
   citations: ChatCitation[];
-  used_chunk_ids: string[];
   retrieval_mode:
     | "semantic_with_filters"
-    | "semantic_with_filters_and_keyword_fallback"
-    | "semantic_with_keyword_fallback";
+    | "semantic_with_keyword_fallback"
+    | "external_web_search"
+    | "external_search_unavailable"
+    | "mixed_document_external"
+    | "unsupported";
 };

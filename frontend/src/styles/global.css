@@ -657,7 +657,7 @@ button {
 .summary-section__points {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .summary-card {
@@ -688,6 +688,56 @@ button {
 .summary-card p + p,
 .chat-shell__body p + p {
   margin-top: 8px;
+}
+
+.summary-point {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 10px;
+  width: 100%;
+  padding: 10px 8px 10px 10px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.56);
+  text-align: left;
+  color: inherit;
+}
+
+.summary-point:hover {
+  background: rgba(15, 118, 110, 0.05);
+}
+
+.summary-point--active {
+  border-color: rgba(15, 118, 110, 0.24);
+  background: rgba(15, 118, 110, 0.1);
+}
+
+.summary-point__bullet {
+  width: 7px;
+  height: 7px;
+  margin-top: 0.5rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.78);
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.08);
+}
+
+.summary-point--active .summary-point__bullet {
+  background: var(--accent);
+  box-shadow: 0 0 0 5px rgba(15, 118, 110, 0.12);
+}
+
+.summary-point__text {
+  min-width: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.summary-point__page {
+  padding-top: 1px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
 }
 
 .status-badge {

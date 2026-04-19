@@ -117,6 +117,13 @@ export type CitationTarget =
       quote: string;
     }
   | {
+      kind: "chat";
+      id: string;
+      title: string;
+      page: number | null;
+      quote: string;
+    }
+  | {
       kind: "metric";
       id: string;
       title: string;
@@ -124,3 +131,25 @@ export type CitationTarget =
       quote: string;
       value: string | number | null;
     };
+
+export type ChatCitation = {
+  citation_id: string;
+  chunk_id: string;
+  document_id: string;
+  source_path: string;
+  page_number: number | null;
+  quote: string;
+  score: number | null;
+};
+
+export type ChatResponse = {
+  document_id: string;
+  question: string;
+  answer: string;
+  citations: ChatCitation[];
+  used_chunk_ids: string[];
+  retrieval_mode:
+    | "semantic_with_filters"
+    | "semantic_with_filters_and_keyword_fallback"
+    | "semantic_with_keyword_fallback";
+};

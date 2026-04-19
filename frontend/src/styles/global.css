@@ -836,8 +836,74 @@ button {
 }
 
 .chat-shell__body {
-  color: var(--muted);
   overflow: auto;
+}
+
+.chat-empty {
+  color: var(--muted);
+}
+
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.chat-message--user {
+  background: rgba(20, 33, 45, 0.04);
+}
+
+.chat-message--error {
+  border-color: rgba(185, 28, 28, 0.16);
+  background: rgba(185, 28, 28, 0.06);
+}
+
+.chat-message__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.chat-message__mode {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.chat-message__content {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.chat-message__citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chat-citation-chip {
+  min-height: 28px;
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--accent);
+  padding: 0 10px;
+}
+
+.chat-shell__composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
 }
 
 .chat-shell__header {
@@ -853,6 +919,11 @@ button {
   background: rgba(255, 255, 255, 0.8);
   padding: 12px 14px;
   resize: none;
+}
+
+.chat-shell__submit {
+  min-width: 88px;
+  align-self: stretch;
 }
 
 .viewer-empty {
@@ -951,7 +1022,9 @@ button {
   .citation-bar,
   .pdf-viewer__toolbar,
   .pdf-viewer__controls,
-  .chat-shell__header {
+  .chat-shell__header,
+  .chat-shell__composer,
+  .chat-message__meta {
     flex-direction: column;
     align-items: start;
   }

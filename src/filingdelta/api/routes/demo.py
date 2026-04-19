@@ -7,6 +7,8 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 
 from filingdelta.schemas.demo import (
+    DemoChatRequest,
+    DemoChatResponse,
     CreateDemoRunRequest,
     DemoDocumentListResponse,
     DemoRunFeedbackActionRequest,
@@ -17,6 +19,7 @@ from filingdelta.services.demo_documents import (
     get_demo_document_source,
     list_demo_documents,
 )
+from filingdelta.services.chat_qa import get_chat_qa_service
 from filingdelta.services.demo_runs import get_demo_run_manager
 
 
@@ -100,6 +103,27 @@ async def rerun_demo_run_feedback(run_id: str, payload: DemoRunFeedbackActionReq
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     return DemoRunResponse(run=run)
+
+
+@router.post("/chat", response_model=DemoChatResponse)
+async def demo_chat(payload: DemoChatRequest) -> DemoChatResponse:
+    try:
+        source = get_demo_document_source(payload.document_id)
+        service = get_chat_qa_service()
+    except KeyError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    try:
+        response = await service.ask(
+            document_id=payload.document_id,
+            source=source,
+            question=payload.question,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    return DemoChatResponse(response=response)
 
 
 def _guess_media_type(path: Path) -> str:

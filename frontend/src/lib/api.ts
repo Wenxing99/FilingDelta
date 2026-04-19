@@ -1,4 +1,4 @@
-import type { DemoDocument, DemoRun } from "./types";
+import type { ChatResponse, DemoDocument, DemoRun } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
 
@@ -74,4 +74,15 @@ export async function rerunDemoRunFeedback(
     body: JSON.stringify({ feedback_category: feedbackCategory }),
   });
   return payload.run;
+}
+
+export async function askDemoChat(documentId: string, question: string): Promise<ChatResponse> {
+  const payload = await requestJson<{ response: ChatResponse }>("/api/demo/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      document_id: documentId,
+      question,
+    }),
+  });
+  return payload.response;
 }

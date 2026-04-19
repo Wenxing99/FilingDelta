@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 
 import { AnalysisProgressCard } from "../features/analysis/AnalysisProgressCard";
-import { ChatPlaceholder } from "../features/chat/ChatPlaceholder";
+import { ChatPanel } from "../features/chat/ChatPanel";
 import { HeadlineMetricsPanel } from "../features/analysis/HeadlineMetricsPanel";
 import { ReviewStatusCard } from "../features/analysis/ReviewStatusCard";
 import { SummaryList } from "../features/analysis/SummaryList";
@@ -395,7 +395,7 @@ export default function App() {
         />
 
         <aside className="chat-column">
-          <ChatPlaceholder />
+          <ChatPanel document={selectedDocument} onSelectCitation={setActiveCitationTarget} />
         </aside>
       </main>
     </div>

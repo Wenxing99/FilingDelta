@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from filingdelta.schemas.chat import ChatAnswer
 from filingdelta.schemas.workflow import SingleFilingWorkflowResult
 
 
@@ -37,6 +38,11 @@ class DemoRunFeedbackActionRequest(BaseModel):
     feedback_category: Literal["citation", "numeric", "summary"]
 
 
+class DemoChatRequest(BaseModel):
+    document_id: str
+    question: str = Field(min_length=1, max_length=1000)
+
+
 class DemoRun(BaseModel):
     run_id: str
     status: Literal["queued", "running", "succeeded", "failed"] = "queued"
@@ -56,3 +62,7 @@ class DemoRun(BaseModel):
 
 class DemoRunResponse(BaseModel):
     run: DemoRun
+
+
+class DemoChatResponse(BaseModel):
+    response: ChatAnswer

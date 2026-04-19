@@ -29,6 +29,14 @@ class CreateDemoRunRequest(BaseModel):
     document_id: str
 
 
+class DemoRunIssueActionRequest(BaseModel):
+    item_key: str
+
+
+class DemoRunFeedbackActionRequest(BaseModel):
+    feedback_category: Literal["citation", "numeric", "summary"]
+
+
 class DemoRun(BaseModel):
     run_id: str
     status: Literal["queued", "running", "succeeded", "failed"] = "queued"

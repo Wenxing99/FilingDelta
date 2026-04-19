@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -97,6 +98,21 @@ class SummaryItem(BaseModel):
     title: str
     summary: str
     citations: list[Citation] = Field(default_factory=list)
+    needs_human_review: bool = False
+
+
+class SummaryPoint(BaseModel):
+    point_id: str
+    text: str
+    citations: list[Citation] = Field(default_factory=list)
+    verification_status: Literal["verified", "review"] = "verified"
+    needs_human_review: bool = False
+
+
+class SummarySection(BaseModel):
+    section_id: str
+    title: str
+    points: list[SummaryPoint] = Field(default_factory=list)
     needs_human_review: bool = False
 
 

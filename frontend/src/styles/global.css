@@ -134,6 +134,20 @@ button {
   opacity: 0.55;
 }
 
+.secondary-button {
+  min-height: 36px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0 12px;
+  color: #14212d;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.secondary-button--ghost {
+  background: rgba(20, 33, 45, 0.04);
+  color: var(--muted);
+}
+
 .status-panel {
   padding: 16px 20px;
   border: 1px solid var(--border);
@@ -574,6 +588,36 @@ button {
   gap: 10px;
 }
 
+.summary-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.summary-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.summary-section__header strong {
+  font-size: 0.96rem;
+}
+
+.summary-section__count {
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.summary-section__points {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .summary-card {
   padding: 14px 16px;
 }
@@ -640,6 +684,34 @@ button {
   color: var(--muted);
 }
 
+.review-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.review-summary-stat {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.review-summary-stat__label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
 .review-issues {
   display: flex;
   flex-direction: column;
@@ -656,11 +728,61 @@ button {
   background: rgba(255, 255, 255, 0.7);
 }
 
+.review-issue__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: start;
+}
+
+.review-issue__reason {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(180, 83, 9, 0.12);
+  color: var(--warning);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
 .review-issues span {
   display: block;
   margin-top: 6px;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.review-issue__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.review-feedback {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.review-feedback__header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.review-feedback__header span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.review-feedback__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .citation-bar {

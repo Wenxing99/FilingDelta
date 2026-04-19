@@ -48,3 +48,30 @@ export async function getDemoRun(runId: string): Promise<DemoRun> {
   const payload = await requestJson<{ run: DemoRun }>(`/api/demo/runs/${runId}`);
   return payload.run;
 }
+
+export async function approveDemoRunIssue(runId: string, itemKey: string): Promise<DemoRun> {
+  const payload = await requestJson<{ run: DemoRun }>(`/api/demo/runs/${runId}/issues/approve`, {
+    method: "POST",
+    body: JSON.stringify({ item_key: itemKey }),
+  });
+  return payload.run;
+}
+
+export async function rerunDemoRunIssue(runId: string, itemKey: string): Promise<DemoRun> {
+  const payload = await requestJson<{ run: DemoRun }>(`/api/demo/runs/${runId}/issues/rerun`, {
+    method: "POST",
+    body: JSON.stringify({ item_key: itemKey }),
+  });
+  return payload.run;
+}
+
+export async function rerunDemoRunFeedback(
+  runId: string,
+  feedbackCategory: "citation" | "numeric" | "summary",
+): Promise<DemoRun> {
+  const payload = await requestJson<{ run: DemoRun }>(`/api/demo/runs/${runId}/feedback`, {
+    method: "POST",
+    body: JSON.stringify({ feedback_category: feedbackCategory }),
+  });
+  return payload.run;
+}

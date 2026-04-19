@@ -59,11 +59,15 @@ class SingleFilingWorkflow(Workflow):
         parsed_filing = await ctx.store.get("parsed_filing")
         chunks = await ctx.store.get("chunks")
         reader_drafts = await self._reader.read(parsed_filing, chunks)
+        point_count = sum(len(section.points) for section in reader_drafts.sections)
 
         ctx.write_event_to_stream(
             WorkflowProgressEvent(
                 stage="reader",
-                message=f"Reader produced {len(reader_drafts.items)} summary items for {ev.document_id}.",
+                message=(
+                    f"Reader produced {len(reader_drafts.sections)} sections and "
+                    f"{point_count} summary points for {ev.document_id}."
+                ),
             )
         )
 
@@ -128,10 +132,13 @@ class SingleFilingWorkflow(Workflow):
             total_pages=parsed_filing.document.total_pages,
             chunk_count=len(chunks),
             reader_drafts=reader_event.reader_drafts,
+            overview=verification.overview,
+            summary_sections=verification.summary_sections,
             summary_items=verification.summary_items,
             headline_metrics=fact_event.facts,
             verification_issues=verification.issues,
             needs_human_review=verification.needs_human_review,
+            review=verification.review,
         )
 
         ctx.write_event_to_stream(

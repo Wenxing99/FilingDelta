@@ -6,7 +6,13 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import FileResponse
 
-from filingdelta.schemas.demo import CreateDemoRunRequest, DemoDocumentListResponse, DemoRunResponse
+from filingdelta.schemas.demo import (
+    CreateDemoRunRequest,
+    DemoDocumentListResponse,
+    DemoRunFeedbackActionRequest,
+    DemoRunIssueActionRequest,
+    DemoRunResponse,
+)
 from filingdelta.services.demo_documents import (
     get_demo_document_source,
     list_demo_documents,
@@ -57,6 +63,42 @@ async def get_demo_run(run_id: str) -> DemoRunResponse:
         run = await manager.get_run(run_id)
     except KeyError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    return DemoRunResponse(run=run)
+
+
+@router.post("/runs/{run_id}/issues/approve", response_model=DemoRunResponse)
+async def approve_demo_run_issue(run_id: str, payload: DemoRunIssueActionRequest) -> DemoRunResponse:
+    manager = get_demo_run_manager()
+    try:
+        run = await manager.approve_issue(run_id=run_id, item_key=payload.item_key)
+    except KeyError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return DemoRunResponse(run=run)
+
+
+@router.post("/runs/{run_id}/issues/rerun", response_model=DemoRunResponse)
+async def rerun_demo_run_issue(run_id: str, payload: DemoRunIssueActionRequest) -> DemoRunResponse:
+    manager = get_demo_run_manager()
+    try:
+        run = await manager.rerun_issue(run_id=run_id, item_key=payload.item_key)
+    except KeyError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return DemoRunResponse(run=run)
+
+
+@router.post("/runs/{run_id}/feedback", response_model=DemoRunResponse)
+async def rerun_demo_run_feedback(run_id: str, payload: DemoRunFeedbackActionRequest) -> DemoRunResponse:
+    manager = get_demo_run_manager()
+    try:
+        run = await manager.rerun_feedback(run_id=run_id, feedback_category=payload.feedback_category)
+    except KeyError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
     return DemoRunResponse(run=run)
 
 

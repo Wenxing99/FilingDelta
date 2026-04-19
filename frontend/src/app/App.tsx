@@ -10,7 +10,14 @@ import { DocumentOverview } from "../features/documents/DocumentOverview";
 import { DocumentSelector } from "../features/documents/DocumentSelector";
 import { CitationDetailBar } from "../features/viewer/CitationDetailBar";
 import { DocumentViewer } from "../features/viewer/DocumentViewer";
-import { createDemoRun, getDemoRun, listDemoDocuments } from "../lib/api";
+import {
+  approveDemoRunIssue,
+  createDemoRun,
+  getDemoRun,
+  listDemoDocuments,
+  rerunDemoRunFeedback,
+  rerunDemoRunIssue,
+} from "../lib/api";
 import type { CitationTarget, DemoDocument, DemoRun, WorkflowResult } from "../lib/types";
 
 export default function App() {
@@ -27,6 +34,9 @@ export default function App() {
   const [activeCitationTarget, setActiveCitationTarget] = useState<CitationTarget | null>(null);
   const [isStartingRun, setIsStartingRun] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
+  const [showVerifiedOnly, setShowVerifiedOnly] = useState(false);
+  const [activeIssueActionKey, setActiveIssueActionKey] = useState<string | null>(null);
+  const [activeFeedbackActionKey, setActiveFeedbackActionKey] = useState<string | null>(null);
   const [analysisColumnWidth, setAnalysisColumnWidth] = useState(340);
   const [chatColumnWidth, setChatColumnWidth] = useState(300);
   const [isResizingColumns, setIsResizingColumns] = useState(false);
@@ -97,8 +107,13 @@ export default function App() {
     if (!result) {
       return;
     }
-    setActiveCitationTarget((current) => current ?? buildInitialCitationTarget(result));
-  }, [result]);
+    setActiveCitationTarget((current) => {
+      if (!current) {
+        return buildInitialCitationTarget(result, showVerifiedOnly);
+      }
+      return refreshCitationTarget(current, result, showVerifiedOnly);
+    });
+  }, [result, showVerifiedOnly]);
 
   useEffect(() => {
     const workspaceNode = workspaceRef.current;
@@ -222,12 +237,64 @@ export default function App() {
       setPageError(null);
       setIsStartingRun(true);
       setActiveCitationTarget(null);
+      setShowVerifiedOnly(false);
       const nextRun = await createDemoRun(selectedDocumentId);
       setRun(nextRun);
     } catch (error) {
       setPageError(error instanceof Error ? error.message : "启动分析失败。");
     } finally {
       setIsStartingRun(false);
+    }
+  }
+
+  async function handleApproveIssue(itemKey: string) {
+    if (!run) {
+      return;
+    }
+
+    try {
+      setPageError(null);
+      setActiveIssueActionKey(`approve:${itemKey}`);
+      const nextRun = await approveDemoRunIssue(run.run_id, itemKey);
+      setRun(nextRun);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "手动确认待确认项失败。");
+    } finally {
+      setActiveIssueActionKey(null);
+    }
+  }
+
+  async function handleRerunIssue(itemKey: string) {
+    if (!run) {
+      return;
+    }
+
+    try {
+      setPageError(null);
+      setActiveIssueActionKey(`rerun:${itemKey}`);
+      const nextRun = await rerunDemoRunIssue(run.run_id, itemKey);
+      setRun(nextRun);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "重新处理待确认项失败。");
+    } finally {
+      setActiveIssueActionKey(null);
+    }
+  }
+
+  async function handleFeedback(category: "citation" | "numeric" | "summary") {
+    if (!run) {
+      return;
+    }
+
+    try {
+      setPageError(null);
+      setActiveFeedbackActionKey(`feedback:${category}`);
+      const nextRun = await rerunDemoRunFeedback(run.run_id, category);
+      setRun(nextRun);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "按问题类型重新处理失败。");
+    } finally {
+      setActiveFeedbackActionKey(null);
     }
   }
 
@@ -247,6 +314,7 @@ export default function App() {
               setSelectedDocumentId(documentId);
               setRun(null);
               setActiveCitationTarget(null);
+              setShowVerifiedOnly(false);
             }}
           />
           <button
@@ -272,15 +340,28 @@ export default function App() {
           <DocumentOverview document={selectedDocument} />
           <HeadlineMetricsPanel
             metrics={result?.headline_metrics ?? null}
+            showVerifiedOnly={showVerifiedOnly}
             activeTargetId={activeCitationTarget?.id ?? null}
             onSelect={setActiveCitationTarget}
           />
           <SummaryList
-            items={result?.summary_items ?? []}
+            overview={result?.overview ?? null}
+            sections={result?.summary_sections ?? []}
+            fallbackItems={result?.summary_items ?? []}
+            showVerifiedOnly={showVerifiedOnly}
             activeTargetId={activeCitationTarget?.id ?? null}
             onSelect={setActiveCitationTarget}
           />
-          <ReviewStatusCard run={run} />
+          <ReviewStatusCard
+            run={run}
+            showVerifiedOnly={showVerifiedOnly}
+            activeIssueActionKey={activeIssueActionKey}
+            activeFeedbackActionKey={activeFeedbackActionKey}
+            onToggleVerifiedOnly={() => setShowVerifiedOnly((current) => !current)}
+            onApproveIssue={(itemKey) => void handleApproveIssue(itemKey)}
+            onRerunIssue={(itemKey) => void handleRerunIssue(itemKey)}
+            onFeedback={(category) => void handleFeedback(category)}
+          />
         </aside>
 
         <div
@@ -321,7 +402,36 @@ export default function App() {
   );
 }
 
-function buildInitialCitationTarget(result: WorkflowResult): CitationTarget | null {
+function buildInitialCitationTarget(result: WorkflowResult, showVerifiedOnly = false): CitationTarget | null {
+  if (result.overview?.citations[0] && (!showVerifiedOnly || !result.overview.needs_human_review)) {
+    return {
+      kind: "summary",
+      id: "summary:overview",
+      title: "Overview",
+      page: result.overview.citations[0].page_number,
+      quote: result.overview.citations[0].quote,
+    };
+  }
+
+  for (const section of result.summary_sections) {
+    for (const point of section.points) {
+      if (showVerifiedOnly && point.needs_human_review) {
+        continue;
+      }
+      const citation = point.citations[0];
+      if (!citation) {
+        continue;
+      }
+      return {
+        kind: "summary",
+        id: `summary-point:${point.point_id}`,
+        title: section.title,
+        page: citation.page_number,
+        quote: citation.quote,
+      };
+    }
+  }
+
   const firstSummaryIndex = result.summary_items.findIndex((item) => item.citations.length > 0);
   if (firstSummaryIndex >= 0) {
     const firstSummary = result.summary_items[firstSummaryIndex];
@@ -342,6 +452,9 @@ function buildInitialCitationTarget(result: WorkflowResult): CitationTarget | nu
   ] as const;
 
   for (const [key, label, field] of metricEntries) {
+    if (showVerifiedOnly && (field.value === null || !field.citations[0])) {
+      continue;
+    }
     const citation = field.citations[0];
     if (!citation) {
       continue;
@@ -357,6 +470,119 @@ function buildInitialCitationTarget(result: WorkflowResult): CitationTarget | nu
   }
 
   return null;
+}
+
+function isCitationTargetVisible(target: CitationTarget, result: WorkflowResult): boolean {
+  if (target.kind === "metric") {
+    const metricKey = target.id.replace("metric:", "") as
+      | "revenue"
+      | "net_profit"
+      | "unit"
+      | "fiscal_period";
+    const field = result.headline_metrics[metricKey];
+    return Boolean(field && field.value !== null && field.citations[0]);
+  }
+
+  if (target.id === "summary:overview") {
+    return Boolean(result.overview && !result.overview.needs_human_review);
+  }
+
+  if (target.id.startsWith("summary-point:")) {
+    const pointId = target.id.replace("summary-point:", "");
+    return result.summary_sections.some((section) =>
+      section.points.some((point) => point.point_id === pointId && !point.needs_human_review),
+    );
+  }
+
+  if (target.id.startsWith("summary:")) {
+    const index = Number(target.id.replace("summary:", "")) - 1;
+    const item = result.summary_items[index];
+    return Boolean(item && !item.needs_human_review);
+  }
+
+  return true;
+}
+
+function refreshCitationTarget(
+  target: CitationTarget,
+  result: WorkflowResult,
+  showVerifiedOnly: boolean,
+): CitationTarget | null {
+  if (showVerifiedOnly && !isCitationTargetVisible(target, result)) {
+    return buildInitialCitationTarget(result, true);
+  }
+
+  if (target.kind === "metric") {
+    const metricKey = target.id.replace("metric:", "") as
+      | "revenue"
+      | "net_profit"
+      | "unit"
+      | "fiscal_period";
+    const field = result.headline_metrics[metricKey];
+    if (!field || field.value === null) {
+      return buildInitialCitationTarget(result, showVerifiedOnly);
+    }
+    const citation = field.citations[0];
+    return {
+      kind: "metric",
+      id: target.id,
+      title: target.title,
+      page: citation?.page_number ?? field.evidence_page ?? null,
+      quote: citation?.quote || field.evidence_quote || "暂无引用片段。",
+      value: field.value,
+    };
+  }
+
+  if (target.id === "summary:overview") {
+    if (!result.overview) {
+      return buildInitialCitationTarget(result, showVerifiedOnly);
+    }
+    const citation = result.overview.citations[0];
+    return {
+      kind: "summary",
+      id: target.id,
+      title: "Overview",
+      page: citation?.page_number ?? null,
+      quote: citation?.quote || "暂无引用片段。",
+    };
+  }
+
+  if (target.id.startsWith("summary-point:")) {
+    const pointId = target.id.replace("summary-point:", "");
+    for (const section of result.summary_sections) {
+      const point = section.points.find((item) => item.point_id === pointId);
+      if (!point) {
+        continue;
+      }
+      const citation = point.citations[0];
+      return {
+        kind: "summary",
+        id: target.id,
+        title: section.title,
+        page: citation?.page_number ?? null,
+        quote: citation?.quote || "暂无引用片段。",
+      };
+    }
+    return buildInitialCitationTarget(result, showVerifiedOnly);
+  }
+
+  if (target.id.startsWith("summary:")) {
+    const index = Number(target.id.replace("summary:", "")) - 1;
+    const item = result.summary_items[index];
+    if (!item) {
+      return buildInitialCitationTarget(result, showVerifiedOnly);
+    }
+    const citation = item.citations[0];
+    return {
+      kind: "summary",
+      id: target.id,
+      title: item.title,
+      page: citation?.page_number ?? null,
+      quote: citation?.quote || "暂无引用片段。",
+    };
+  }
+
+  return target;
 }
 
 const LEFT_COLUMN_MIN_WIDTH = 280;

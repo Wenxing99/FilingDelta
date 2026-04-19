@@ -9,6 +9,7 @@ from llama_index.core.workflow import StopEvent
 from filingdelta.core.config import Settings, get_settings
 from filingdelta.schemas.demo import DemoRun
 from filingdelta.schemas.filing import FilingSource
+from filingdelta.services.review_feedback import ReviewFeedbackService
 from filingdelta.workflows.events import WorkflowProgressEvent
 from filingdelta.workflows.single_filing import SingleFilingWorkflow
 
@@ -39,7 +40,9 @@ class DemoRunManager:
         self._settings = settings or get_settings()
         self._runs: dict[str, DemoRun] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._sources: dict[str, FilingSource] = {}
         self._lock = asyncio.Lock()
+        self._review_feedback = ReviewFeedbackService(settings=self._settings)
 
     async def create_run(self, document_id: str, source: FilingSource) -> DemoRun:
         now = datetime.now(UTC)
@@ -56,6 +59,7 @@ class DemoRunManager:
         )
         async with self._lock:
             self._runs[run_id] = run
+            self._sources[run_id] = source
 
         task = asyncio.create_task(self._execute_run(run_id=run_id, source=source))
         self._tasks[run_id] = task
@@ -67,6 +71,103 @@ class DemoRunManager:
             if run is None:
                 raise KeyError(f"Unknown run: {run_id}")
             return run.model_copy(deep=True)
+
+    async def approve_issue(self, run_id: str, item_key: str) -> DemoRun:
+        async with self._lock:
+            current = self._runs.get(run_id)
+            if current is None:
+                raise KeyError(f"Unknown run: {run_id}")
+            if current.result is None:
+                raise ValueError("Run result is not ready yet.")
+            if current.status != "succeeded":
+                raise ValueError("Only succeeded runs can accept issue actions.")
+
+            updated_result = await self._review_feedback.approve_issue(
+                result=current.result,
+                item_key=item_key,
+            )
+            self._runs[run_id] = current.model_copy(
+                update={
+                    "updated_at": datetime.now(UTC),
+                    "progress_message": "已手动确认一条待确认项。",
+                    "result": updated_result,
+                }
+            )
+            return self._runs[run_id].model_copy(deep=True)
+
+    async def rerun_issue(self, run_id: str, item_key: str) -> DemoRun:
+        async with self._lock:
+            current = self._runs.get(run_id)
+            source = self._sources.get(run_id)
+            if current is None:
+                raise KeyError(f"Unknown run: {run_id}")
+            if source is None:
+                raise KeyError(f"Missing source for run: {run_id}")
+            if current.result is None:
+                raise ValueError("Run result is not ready yet.")
+            if current.status != "succeeded":
+                raise ValueError("Only succeeded runs can accept issue actions.")
+
+            self._runs[run_id] = current.model_copy(
+                update={
+                    "updated_at": datetime.now(UTC),
+                    "progress_message": "正在重新处理待确认项。",
+                }
+            )
+
+        updated_result = await self._review_feedback.rerun_issue(
+            source=source,
+            result=current.result,
+            item_key=item_key,
+        )
+
+        async with self._lock:
+            latest = self._runs[run_id]
+            self._runs[run_id] = latest.model_copy(
+                update={
+                    "updated_at": datetime.now(UTC),
+                    "progress_message": "已重新处理一条待确认项。",
+                    "result": updated_result,
+                }
+            )
+            return self._runs[run_id].model_copy(deep=True)
+
+    async def rerun_feedback(self, run_id: str, feedback_category: str) -> DemoRun:
+        async with self._lock:
+            current = self._runs.get(run_id)
+            source = self._sources.get(run_id)
+            if current is None:
+                raise KeyError(f"Unknown run: {run_id}")
+            if source is None:
+                raise KeyError(f"Missing source for run: {run_id}")
+            if current.result is None:
+                raise ValueError("Run result is not ready yet.")
+            if current.status != "succeeded":
+                raise ValueError("Only succeeded runs can accept feedback actions.")
+
+            self._runs[run_id] = current.model_copy(
+                update={
+                    "updated_at": datetime.now(UTC),
+                    "progress_message": _feedback_progress_message(feedback_category, "running"),
+                }
+            )
+
+        updated_result = await self._review_feedback.rerun_feedback_category(
+            source=source,
+            result=current.result,
+            feedback_category=feedback_category,
+        )
+
+        async with self._lock:
+            latest = self._runs[run_id]
+            self._runs[run_id] = latest.model_copy(
+                update={
+                    "updated_at": datetime.now(UTC),
+                    "progress_message": _feedback_progress_message(feedback_category, "done"),
+                    "result": updated_result,
+                }
+            )
+            return self._runs[run_id].model_copy(deep=True)
 
     async def _set_stage(
         self,
@@ -141,3 +242,24 @@ def get_demo_run_manager() -> DemoRunManager:
     if _demo_run_manager is None:
         _demo_run_manager = DemoRunManager()
     return _demo_run_manager
+
+
+def _feedback_progress_message(feedback_category: str, phase: str) -> str:
+    messages = {
+        "citation": {
+            "running": "正在重新处理引用回溯反馈。",
+            "done": "已根据引用回溯反馈重新处理结果。",
+        },
+        "numeric": {
+            "running": "正在重新处理数据准确度反馈。",
+            "done": "已根据数据准确度反馈重新处理结果。",
+        },
+        "summary": {
+            "running": "正在重新处理摘要信息反馈。",
+            "done": "已根据摘要信息反馈重新处理结果。",
+        },
+    }
+    category_messages = messages.get(feedback_category)
+    if category_messages is None:
+        raise ValueError(f"Unsupported feedback category: {feedback_category}")
+    return category_messages[phase]

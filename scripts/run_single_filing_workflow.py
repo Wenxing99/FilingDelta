@@ -69,14 +69,27 @@ async def _run() -> None:
     print("  revenue:", result.headline_metrics.revenue.value)
     print("  net_profit:", result.headline_metrics.net_profit.value)
 
-    print("summary_items:")
-    for item in result.summary_items:
-        print(f"  - {item.title}: {item.summary}")
-        if item.citations:
-            citation = item.citations[0]
-            print(f"    citation: page={citation.page_number} quote={citation.quote}")
+    print("overview:")
+    if result.overview:
+        print(f"  text: {result.overview.summary}")
+        if result.overview.citations:
+            citation = result.overview.citations[0]
+            print(f"  citation: page={citation.page_number} quote={citation.quote}")
         else:
-            print("    citation: none")
+            print("  citation: none")
+    else:
+        print("  none")
+
+    print("summary_sections:")
+    for section in result.summary_sections:
+        print(f"  [{section.title}]")
+        for point in section.points:
+            print(f"    - {point.text}")
+            if point.citations:
+                citation = point.citations[0]
+                print(f"      citation: page={citation.page_number} quote={citation.quote}")
+            else:
+                print("      citation: none")
 
     print("verification_issues:", len(result.verification_issues))
     for issue in result.verification_issues:

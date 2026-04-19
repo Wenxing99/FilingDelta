@@ -2,6 +2,7 @@ import type { CitationTarget, HeadlineMetrics } from "../../lib/types";
 
 type HeadlineMetricsPanelProps = {
   metrics: HeadlineMetrics | null;
+  showVerifiedOnly: boolean;
   activeTargetId: string | null;
   onSelect: (target: CitationTarget) => void;
 };
@@ -15,9 +16,24 @@ const METRIC_CONFIG = [
 
 export function HeadlineMetricsPanel({
   metrics,
+  showVerifiedOnly,
   activeTargetId,
   onSelect,
 }: HeadlineMetricsPanelProps) {
+  const visibleMetrics = METRIC_CONFIG.filter(({ key }) => {
+    const field = metrics?.[key];
+    if (!field) {
+      return true;
+    }
+    if (!showVerifiedOnly) {
+      return true;
+    }
+    if (field.value === null || field.value === "") {
+      return false;
+    }
+    return (field.citations?.length ?? 0) > 0;
+  });
+
   return (
     <section className="panel-card">
       <div className="panel-card__header">
@@ -25,7 +41,7 @@ export function HeadlineMetricsPanel({
         <h3>关键数据</h3>
       </div>
       <div className="metrics-grid">
-        {METRIC_CONFIG.map(({ key, label }) => {
+        {visibleMetrics.map(({ key, label }) => {
           const field = metrics?.[key];
           const citation = field?.citations?.[0];
           const targetId = `metric:${key}`;
@@ -53,6 +69,9 @@ export function HeadlineMetricsPanel({
           );
         })}
       </div>
+      {showVerifiedOnly && visibleMetrics.length === 0 ? (
+        <div className="empty-inline">当前仅显示已核验内容，暂无可展示的关键数据。</div>
+      ) : null}
     </section>
   );
 }

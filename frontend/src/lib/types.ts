@@ -25,6 +25,21 @@ export type SummaryItem = {
   needs_human_review: boolean;
 };
 
+export type SummaryPoint = {
+  point_id: string;
+  text: string;
+  citations: Citation[];
+  verification_status: "verified" | "review";
+  needs_human_review: boolean;
+};
+
+export type SummarySection = {
+  section_id: string;
+  title: string;
+  points: SummaryPoint[];
+  needs_human_review: boolean;
+};
+
 export type ExtractedFactField = {
   value: string | number | null;
   reasoning: string | null;
@@ -47,10 +62,20 @@ export type HeadlineMetrics = {
 export type VerificationIssue = {
   scope: "summary" | "facts";
   item_key: string;
+  item_label: string;
   message: string;
   severity: "warning" | "review";
+  review_reason: "citation_pending" | "numeric_pending" | "summary_incomplete";
+  user_visible_reason: string;
   evidence_page: number | null;
   evidence_quote: string | null;
+};
+
+export type ReviewStatusSummary = {
+  status: "passed" | "needs_confirmation" | "failed";
+  verified_count: number;
+  pending_confirmation_count: number;
+  failed_count: number;
 };
 
 export type WorkflowResult = {
@@ -59,10 +84,13 @@ export type WorkflowResult = {
   parser_kind: string;
   total_pages: number;
   chunk_count: number;
+  overview: SummaryItem | null;
+  summary_sections: SummarySection[];
   summary_items: SummaryItem[];
   headline_metrics: HeadlineMetrics;
   verification_issues: VerificationIssue[];
   needs_human_review: boolean;
+  review: ReviewStatusSummary;
 };
 
 export type DemoRun = {

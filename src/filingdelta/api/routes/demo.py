@@ -3,7 +3,7 @@ from __future__ import annotations
 import mimetypes
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
 from filingdelta.schemas.demo import (
@@ -13,10 +13,12 @@ from filingdelta.schemas.demo import (
     DemoDocumentListResponse,
     DemoRunFeedbackActionRequest,
     DemoRunIssueActionRequest,
+    DemoDocument,
     DemoRunResponse,
 )
 from filingdelta.services.demo_documents import (
     get_demo_document_source,
+    import_demo_document,
     list_demo_documents,
 )
 from filingdelta.services.chat_qa import get_chat_qa_service
@@ -29,6 +31,19 @@ router = APIRouter(prefix="/api/demo", tags=["demo"])
 @router.get("/documents", response_model=DemoDocumentListResponse)
 def demo_documents() -> DemoDocumentListResponse:
     return DemoDocumentListResponse(documents=list_demo_documents())
+
+
+@router.post("/documents/import", response_model=DemoDocument, status_code=status.HTTP_201_CREATED)
+async def import_demo_source(file: UploadFile = File(...)) -> DemoDocument:
+    try:
+        content = await file.read()
+        document = import_demo_document(file.filename or "", content)
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    finally:
+        await file.close()
+
+    return document
 
 
 @router.get("/documents/{document_id}/source")

@@ -86,6 +86,7 @@ class ExternalSearchService:
             search_kind=search_kind,
             answer_text=answer_text,
             citations=citations,
+            usage=payload.get("usage"),
         )
 
 

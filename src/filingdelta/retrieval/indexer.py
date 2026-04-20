@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from llama_index.core import StorageContext, VectorStoreIndex
+from llama_index.core.callbacks import CallbackManager
 from llama_index.core.schema import TextNode
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.qdrant import QdrantVectorStore
@@ -32,13 +33,13 @@ class DocumentChunkIndexer:
             client=self._client,
             collection_name=COLLECTION_NAME,
         )
-        self._embed_model = OpenAIEmbedding(
-            model=self._settings.filingdelta_embed_model,
-            api_key=self._settings.require_openai_api_key(),
-            api_base=self._settings.openai_base_url,
-        )
-
-    def index_document(self, *, document_id: str, chunks: list[FilingChunk]) -> None:
+    def index_document(
+        self,
+        *,
+        document_id: str,
+        chunks: list[FilingChunk],
+        callback_manager: CallbackManager | None = None,
+    ) -> None:
         if not chunks:
             return
 
@@ -46,10 +47,18 @@ class DocumentChunkIndexer:
         index = VectorStoreIndex(
             nodes=[],
             storage_context=storage_context,
-            embed_model=self._embed_model,
+            embed_model=self._build_embed_model(callback_manager=callback_manager),
             show_progress=False,
         )
         index.insert_nodes([chunk_to_node(chunk, document_id=document_id) for chunk in chunks])
+
+    def _build_embed_model(self, *, callback_manager: CallbackManager | None = None) -> OpenAIEmbedding:
+        return OpenAIEmbedding(
+            model=self._settings.filingdelta_embed_model,
+            api_key=self._settings.require_openai_api_key(),
+            api_base=self._settings.openai_base_url,
+            callback_manager=callback_manager,
+        )
 
 
 def chunk_node_id(chunk: FilingChunk, *, document_id: str | None = None) -> str:

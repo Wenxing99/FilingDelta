@@ -43,6 +43,16 @@ class HeadlineMetricsExtractionSchema(BaseModel):
             "profit line. Extract the numeric value only, without commas or unit text."
         ),
     )
+    roe: float | None = Field(
+        default=None,
+        description=(
+            "Return on equity for the main reporting period. Prefer the annualized, excluding "
+            "non-recurring items, attributable to ordinary/common shareholders, weighted "
+            "average ROE measure when available. Extract the numeric value as percentage "
+            "points, without the percent sign or unit text. For example, store 14.34 for "
+            "14.34%, not 0.1434."
+        ),
+    )
 
 
 class ExtractedFactField(BaseModel):
@@ -62,3 +72,4 @@ class HeadlineMetricFacts(BaseModel):
     unit: ExtractedFactField = Field(default_factory=ExtractedFactField)
     revenue: ExtractedFactField = Field(default_factory=ExtractedFactField)
     net_profit: ExtractedFactField = Field(default_factory=ExtractedFactField)
+    roe: ExtractedFactField = Field(default_factory=ExtractedFactField)

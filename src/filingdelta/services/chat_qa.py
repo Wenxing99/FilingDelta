@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
+from llama_index.core.callbacks import CallbackManager
 from qdrant_client import QdrantClient
 
 from filingdelta.agents.answerer import AnswererAgent
@@ -31,6 +32,7 @@ from filingdelta.schemas.chat import (
 from filingdelta.schemas.filing import FilingChunk, FilingSource, ParsedFiling
 from filingdelta.services.chat_memory import ChatMemoryStore
 from filingdelta.services.external_search import ExternalSearchError, ExternalSearchService
+from filingdelta.services.chat_telemetry import ChatTelemetryRecorder
 
 
 _KEYWORD_FALLBACK_TERMS = (
@@ -105,18 +107,34 @@ class ChatQAService:
         if not active_session_id:
             raise ValueError("Session ID must not be empty.")
 
-        bundle = await self._ensure_document_bundle(document_id=document_id, source=source)
+        telemetry = ChatTelemetryRecorder()
+        bundle_exists = document_id in self._bundles
+        if bundle_exists:
+            bundle = await self._ensure_document_bundle(
+                document_id=document_id,
+                source=source,
+                callback_manager=telemetry.callback_manager,
+            )
+        else:
+            with telemetry.track("index_build_ms"):
+                bundle = await self._ensure_document_bundle(
+                    document_id=document_id,
+                    source=source,
+                    callback_manager=telemetry.callback_manager,
+                )
         session_state = await self._memory.get_or_create(
             document_id=document_id,
             session_id=active_session_id,
         )
         try:
-            contextualization = await self._contextualizer.contextualize(
-                question=question_text,
-                document=bundle.parsed_filing.document,
-                recent_messages=session_state.recent_messages,
-                conversation_summary=session_state.conversation_summary,
-            )
+            with telemetry.track("contextualizer_ms"):
+                contextualization = await self._contextualizer.contextualize(
+                    question=question_text,
+                    document=bundle.parsed_filing.document,
+                    recent_messages=session_state.recent_messages,
+                    conversation_summary=session_state.conversation_summary,
+                    callback_manager=telemetry.callback_manager,
+                )
         except Exception:
             contextualization = ChatContextualization(
                 standalone_question=question_text,
@@ -126,14 +144,17 @@ class ChatQAService:
             original_question=question_text,
             contextualization=contextualization,
         )
-        route_decision = await self._router.route(
-            question=effective_question,
-            document=bundle.parsed_filing.document,
-        )
+        with telemetry.track("router_ms"):
+            route_decision = await self._router.route(
+                question=effective_question,
+                document=bundle.parsed_filing.document,
+                callback_manager=telemetry.callback_manager,
+            )
         plan = await self._build_plan(
             question=effective_question,
             document=bundle.parsed_filing.document,
             route_decision=route_decision,
+            telemetry=telemetry,
         )
 
         if route_decision.route == "unsupported":
@@ -147,34 +168,47 @@ class ChatQAService:
                 document=bundle.parsed_filing.document,
                 user_question=question_text,
                 assistant_answer=answer.answer,
+                telemetry=telemetry,
             )
+            answer.telemetry = telemetry.build(route_type=route_decision.route, succeeded=True)
             return answer
 
         retrieved_chunks: list[RetrievedChunk] = []
         document_retrieval_mode: str | None = None
         if plan.document_query:
-            semantic_chunks = await asyncio.to_thread(
-                self._retriever.retrieve,
-                document_id=document_id,
-                question=plan.document_query,
-            )
+            with telemetry.track("document_retrieval_ms"):
+                semantic_chunks = await asyncio.to_thread(
+                    self._retriever.retrieve,
+                    document_id=document_id,
+                    question=plan.document_query,
+                    callback_manager=telemetry.callback_manager,
+                )
             retrieved_chunks, document_retrieval_mode = _merge_keyword_fallback(
                 question=plan.document_query,
                 document_id=document_id,
                 semantic_chunks=semantic_chunks,
                 all_chunks=bundle.chunks,
             )
+        telemetry.set_retrieval(
+            document_top_k=6 if plan.document_query else 0,
+            document_retrieved_chunks=len(retrieved_chunks),
+        )
 
         external_result: ExternalEvidenceResult | None = None
         external_error: str | None = None
         if plan.external_query and plan.external_search_kind != "none":
             try:
-                external_result = await self._external_search.search(
-                    question=plan.external_query,
-                    search_kind=plan.external_search_kind,
-                )
+                with telemetry.track("external_search_ms"):
+                    external_result = await self._external_search.search(
+                        question=plan.external_query,
+                        search_kind=plan.external_search_kind,
+                    )
+                telemetry.add_web_search_usage(external_result.usage)
             except ExternalSearchError as error:
                 external_error = str(error)
+        telemetry.set_retrieval(
+            external_sources_count=len(external_result.citations) if external_result else 0,
+        )
 
         if route_decision.route == "concept_only" and external_result is None:
             answer = _build_external_failure_answer(
@@ -188,19 +222,23 @@ class ChatQAService:
                 document=bundle.parsed_filing.document,
                 user_question=question_text,
                 assistant_answer=answer.answer,
+                telemetry=telemetry,
             )
+            answer.telemetry = telemetry.build(route_type=route_decision.route, succeeded=True)
             return answer
 
-        answer_draft = await self._answerer.answer(
-            question=question_text,
-            standalone_question=effective_question,
-            document=bundle.parsed_filing.document,
-            route_decision=route_decision,
-            plan=plan,
-            retrieved_chunks=retrieved_chunks,
-            external_citations=external_result.citations if external_result else [],
-            external_summary=external_result.answer_text if external_result else "",
-        )
+        with telemetry.track("answerer_ms"):
+            answer_draft = await self._answerer.answer(
+                question=question_text,
+                standalone_question=effective_question,
+                document=bundle.parsed_filing.document,
+                route_decision=route_decision,
+                plan=plan,
+                retrieved_chunks=retrieved_chunks,
+                external_citations=external_result.citations if external_result else [],
+                external_summary=external_result.answer_text if external_result else "",
+                callback_manager=telemetry.callback_manager,
+            )
         answer_draft = _sanitize_synthesis_draft(answer_draft)
 
         sections = _build_answer_sections(
@@ -213,6 +251,14 @@ class ChatQAService:
             retrieved_chunks=retrieved_chunks,
             used_external_citation_ids=answer_draft.used_external_citation_ids,
             external_citations=external_result.citations if external_result else [],
+        )
+        telemetry.set_retrieval(
+            used_document_citations_count=len(
+                [citation for citation in citations if citation.source_type == "document"]
+            ),
+            used_external_citations_count=len(
+                [citation for citation in citations if citation.source_type == "external"]
+            ),
         )
 
         answer = ChatAnswer(
@@ -234,7 +280,9 @@ class ChatQAService:
             document=bundle.parsed_filing.document,
             user_question=question_text,
             assistant_answer=answer.answer,
+            telemetry=telemetry,
         )
+        answer.telemetry = telemetry.build(route_type=route_decision.route, succeeded=True)
         return answer
 
     async def _ensure_document_bundle(
@@ -242,6 +290,7 @@ class ChatQAService:
         *,
         document_id: str,
         source: FilingSource,
+        callback_manager: CallbackManager | None = None,
     ) -> IndexedDocumentBundle:
         existing = self._bundles.get(document_id)
         if existing is not None:
@@ -257,6 +306,7 @@ class ChatQAService:
                 self._indexer.index_document,
                 document_id=document_id,
                 chunks=ingestion_result.chunks,
+                callback_manager=callback_manager,
             )
             bundle = IndexedDocumentBundle(
                 source=source,
@@ -272,6 +322,7 @@ class ChatQAService:
         question: str,
         document,
         route_decision: ChatRouteDecision,
+        telemetry: ChatTelemetryRecorder,
     ) -> ChatPlan:
         route = route_decision.route
         if route == "document_only":
@@ -290,11 +341,13 @@ class ChatQAService:
         if route == "unsupported":
             return ChatPlan(analysis_mode="unsupported", external_search_kind="none")
 
-        planned = await self._planner.plan(
-            question=question,
-            document=document,
-            route_decision=route_decision,
-        )
+        with telemetry.track("planner_ms"):
+            planned = await self._planner.plan(
+                question=question,
+                document=document,
+                route_decision=route_decision,
+                callback_manager=telemetry.callback_manager,
+            )
         return _normalize_plan(planned, question=question, route_decision=route_decision)
 
     async def _record_conversation_turn(
@@ -304,6 +357,7 @@ class ChatQAService:
         document,
         user_question: str,
         assistant_answer: str,
+        telemetry: ChatTelemetryRecorder,
     ) -> None:
         updated_session = await self._memory.append_turn(
             document_id=session_state.document_id,
@@ -312,13 +366,15 @@ class ChatQAService:
             assistant_message=assistant_answer,
         )
         try:
-            summary = await self._memory_summarizer.summarize(
-                document=document,
-                existing_summary=updated_session.conversation_summary,
-                recent_messages=updated_session.recent_messages,
-                user_question=user_question,
-                assistant_answer=assistant_answer,
-            )
+            with telemetry.track("memory_summarizer_ms"):
+                summary = await self._memory_summarizer.summarize(
+                    document=document,
+                    existing_summary=updated_session.conversation_summary,
+                    recent_messages=updated_session.recent_messages,
+                    user_question=user_question,
+                    assistant_answer=assistant_answer,
+                    callback_manager=telemetry.callback_manager,
+                )
             await self._memory.replace_summary(
                 document_id=session_state.document_id,
                 session_id=session_state.session_id,

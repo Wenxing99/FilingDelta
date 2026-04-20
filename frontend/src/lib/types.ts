@@ -57,6 +57,7 @@ export type HeadlineMetrics = {
   unit: ExtractedFactField;
   revenue: ExtractedFactField;
   net_profit: ExtractedFactField;
+  roe: ExtractedFactField;
 };
 
 export type VerificationIssue = {
@@ -93,6 +94,29 @@ export type WorkflowResult = {
   review: ReviewStatusSummary;
 };
 
+export type DemoRunStageTelemetry = {
+  orchestrate_ms: number | null;
+  reader_ms: number | null;
+  fact_extractor_ms: number | null;
+  verifier_ms: number | null;
+  total_ms: number | null;
+};
+
+export type DemoRunArtifactsTelemetry = {
+  total_pages: number | null;
+  chunk_count: number | null;
+  summary_sections_count: number | null;
+  summary_points_count: number | null;
+  verification_issues_count: number | null;
+  needs_human_review: boolean | null;
+};
+
+export type DemoRunTelemetry = {
+  succeeded: boolean;
+  stage_timings: DemoRunStageTelemetry;
+  artifacts: DemoRunArtifactsTelemetry;
+};
+
 export type DemoRun = {
   run_id: string;
   status: "queued" | "running" | "succeeded" | "failed";
@@ -106,6 +130,7 @@ export type DemoRun = {
   updated_at: string;
   error_message: string | null;
   result: WorkflowResult | null;
+  telemetry: DemoRunTelemetry;
 };
 
 export type CitationTarget =
@@ -148,6 +173,46 @@ export type ChatAnswerSection = {
   items: string[];
 };
 
+export type ChatStepTelemetry = {
+  index_build_ms: number | null;
+  contextualizer_ms: number | null;
+  router_ms: number | null;
+  planner_ms: number | null;
+  document_retrieval_ms: number | null;
+  external_search_ms: number | null;
+  answerer_ms: number | null;
+  memory_summarizer_ms: number | null;
+};
+
+export type ChatUsageTelemetry = {
+  llm_prompt_tokens: number;
+  llm_completion_tokens: number;
+  llm_total_tokens: number;
+  embedding_tokens: number;
+  web_search_input_tokens: number;
+  web_search_output_tokens: number;
+  web_search_total_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+};
+
+export type ChatRetrievalTelemetry = {
+  document_top_k: number;
+  document_retrieved_chunks: number;
+  external_sources_count: number;
+  used_document_citations_count: number;
+  used_external_citations_count: number;
+};
+
+export type ChatTelemetry = {
+  route_type: "document_only" | "concept_only" | "mixed" | "unsupported";
+  total_latency_ms: number;
+  succeeded: boolean;
+  steps: ChatStepTelemetry;
+  usage: ChatUsageTelemetry;
+  retrieval: ChatRetrievalTelemetry;
+};
+
 export type ChatResponse = {
   document_id: string;
   session_id: string;
@@ -163,4 +228,5 @@ export type ChatResponse = {
     | "external_search_unavailable"
     | "mixed_document_external"
     | "unsupported";
+  telemetry: ChatTelemetry | null;
 };

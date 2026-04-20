@@ -35,7 +35,7 @@ export function DocumentOverview({ document }: DocumentOverviewProps) {
           </div>
         </dl>
       ) : (
-        <p className="empty-inline">先选择一份样例文档。</p>
+        <p className="empty-inline">先选择一份文档。</p>
       )}
     </section>
   );

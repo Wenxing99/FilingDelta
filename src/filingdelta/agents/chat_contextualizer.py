@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from llama_index.core.callbacks import CallbackManager
 from llama_index.llms.openai import OpenAI
 
 from filingdelta.core.config import Settings, get_settings
@@ -11,13 +12,6 @@ from filingdelta.schemas.filing import FilingDocument
 class ChatContextualizerAgent:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
-        self._llm = OpenAI(
-            model=self._settings.filingdelta_llm_model,
-            temperature=0,
-            api_key=self._settings.require_openai_api_key(),
-            api_base=self._settings.openai_base_url,
-            strict=True,
-        )
 
     async def contextualize(
         self,
@@ -26,8 +20,9 @@ class ChatContextualizerAgent:
         document: FilingDocument,
         recent_messages: list[ChatConversationMessage],
         conversation_summary: ConversationSummary,
+        callback_manager: CallbackManager | None = None,
     ) -> ChatContextualization:
-        return await self._llm.astructured_predict(
+        return await self._build_llm(callback_manager=callback_manager).astructured_predict(
             ChatContextualization,
             CHAT_CONTEXTUALIZE_PROMPT,
             company_name=document.company_name,
@@ -38,6 +33,16 @@ class ChatContextualizerAgent:
             conversation_summary=_format_summary(conversation_summary),
             recent_messages=_format_recent_messages(recent_messages),
             question=question,
+        )
+
+    def _build_llm(self, *, callback_manager: CallbackManager | None = None) -> OpenAI:
+        return OpenAI(
+            model=self._settings.filingdelta_llm_model,
+            temperature=0,
+            api_key=self._settings.require_openai_api_key(),
+            api_base=self._settings.openai_base_url,
+            strict=True,
+            callback_manager=callback_manager,
         )
 
 

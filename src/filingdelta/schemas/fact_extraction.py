@@ -25,6 +25,7 @@ class HeadlineMetricsStructuredExtraction(BaseModel):
     unit: TextFactEvidence = Field(default_factory=TextFactEvidence)
     revenue: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
     net_profit: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
+    roe: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
 
 
 class CandidatePageSelection(BaseModel):

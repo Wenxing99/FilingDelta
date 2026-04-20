@@ -106,8 +106,27 @@ button {
   min-width: 260px;
 }
 
+.document-selector {
+  min-width: 320px;
+}
+
+.document-selector__controls {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.document-selector__select {
+  flex: 1 1 auto;
+}
+
 .field-label {
   font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.field-hint {
+  font-size: 0.75rem;
   color: var(--muted);
 }
 
@@ -117,6 +136,18 @@ button {
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.96);
   padding: 0 12px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .primary-button {
@@ -569,6 +600,39 @@ button {
   justify-content: space-between;
   gap: 12px;
   align-items: start;
+}
+
+.analysis-telemetry {
+  border-top: 1px solid rgba(20, 33, 45, 0.08);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.analysis-telemetry__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.analysis-telemetry__group {
+  border: 1px solid rgba(20, 33, 45, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.analysis-telemetry__group h5 {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.analysis-telemetry__group ul {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .meta-list {
@@ -1029,6 +1093,52 @@ button {
   gap: 8px;
 }
 
+.chat-telemetry {
+  border-top: 1px solid rgba(20, 33, 45, 0.08);
+  padding-top: 10px;
+}
+
+.chat-telemetry summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.chat-telemetry__summary {
+  white-space: nowrap;
+}
+
+.chat-telemetry__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.chat-telemetry__group {
+  border: 1px solid rgba(20, 33, 45, 0.08);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.chat-telemetry__group h5 {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.chat-telemetry__group ul {
+  margin: 0;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .chat-citation-chip {
   min-height: 28px;
   border: 1px solid rgba(15, 118, 110, 0.18);
@@ -1146,6 +1256,15 @@ button {
 
   .field-stack {
     min-width: 0;
+  }
+
+  .document-selector {
+    min-width: 0;
+  }
+
+  .document-selector__controls {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .progress-row,

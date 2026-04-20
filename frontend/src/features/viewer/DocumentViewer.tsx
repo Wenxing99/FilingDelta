@@ -12,7 +12,7 @@ export function DocumentViewer({ document, citationTarget }: DocumentViewerProps
     return (
       <div className="viewer-empty">
         <p>中间区域会显示原始文档。</p>
-        <p>先选择样例文档并运行分析，随后点击左侧摘要或数字查看对应证据。</p>
+        <p>先选择一份文档并运行分析，随后点击左侧摘要或数字查看对应证据。</p>
       </div>
     );
   }

@@ -19,6 +19,7 @@ _HEADLINE_FACT_FIELDS = (
     "unit",
     "revenue",
     "net_profit",
+    "roe",
 )
 
 
@@ -212,7 +213,8 @@ def _build_fact_issue(
         "revenue": "营业收入",
         "net_profit": "归属于股东净利润",
     }
-    numeric_fields = {"revenue", "net_profit"}
+    label_map["roe"] = "净资产收益率"
+    numeric_fields = {"revenue", "net_profit", "roe"}
     is_numeric = field_name in numeric_fields
     return VerificationIssue(
         scope="facts",

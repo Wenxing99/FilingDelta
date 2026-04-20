@@ -24,6 +24,7 @@ _HEADLINE_FACT_FIELDS = (
     "unit",
     "revenue",
     "net_profit",
+    "roe",
 )
 
 

@@ -3,10 +3,11 @@ import type { ChatResponse, DemoDocument, DemoRun } from "./types";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const usesFormData = typeof FormData !== "undefined" && init?.body instanceof FormData;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(usesFormData ? {} : { "Content-Type": "application/json" }),
       ...(init?.headers ?? {}),
     },
   });
@@ -34,6 +35,15 @@ export function apiBaseUrl(): string {
 export async function listDemoDocuments(): Promise<DemoDocument[]> {
   const payload = await requestJson<{ documents: DemoDocument[] }>("/api/demo/documents");
   return payload.documents;
+}
+
+export async function importDemoDocument(file: File): Promise<DemoDocument> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return requestJson<DemoDocument>("/api/demo/documents/import", {
+    method: "POST",
+    body: formData,
+  });
 }
 
 export async function createDemoRun(documentId: string): Promise<DemoRun> {

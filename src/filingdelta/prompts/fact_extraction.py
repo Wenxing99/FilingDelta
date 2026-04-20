@@ -13,9 +13,13 @@ Output rules:
 - If a field cannot be found, set its value to null and leave evidence fields null.
 - `evidence_page` must be one of the provided page numbers.
 - `evidence_quote` must be a short verbatim quote copied from the same page.
-- For numeric fields, return only the numeric value without commas or unit text.
+- For numeric fields, return only the numeric value without commas, percent signs, or unit text.
+- For `roe`, always store the literal percentage-point number shown in the filing. For example, if the page says `14.34%`, return `14.34`, not `0.1434`.
 - Prefer cover pages, financial highlights, summary tables, and result tables over narrative prose when both are available.
 - For `net_profit`, prefer the attributable measure over a generic total net profit measure.
+- For `roe`, prefer the annualized, excluding non-recurring items, attributable to ordinary/common shareholders, weighted average ROE measure when available. If that exact wording is unavailable, fall back to the closest explicitly disclosed weighted average ROE measure.
+- Do not infer or calculate `roe`. If the supplied pages do not explicitly disclose a ROE / ROAE / return on equity measure, return null.
+- Do not use ROAA / return on assets, revenue growth rates, net interest margin, or any other nearby percentage as `roe`.
 
 Field guidance:
 - `company_name`: the official company name shown in the filing.
@@ -23,6 +27,7 @@ Field guidance:
 - `unit`: the unit for the headline financial figures, such as RMB million or 人民币百万元.
 - `revenue`: the total operating revenue / total revenues for the main reporting period.
 - `net_profit`: net profit attributable to shareholders / owners / parent company for the main reporting period.
+- `roe`: return on equity / weighted average return on equity for the main reporting period. Prefer the annualized, excluding non-recurring items, attributable to ordinary/common shareholders version, and keep the literal percentage-point number from the page. Only extract a value when the page explicitly labels the metric as ROE / ROAE / return on equity / 净资产收益率.
 - Do not use a generic "net profit" line if an attributable net profit line is present on the supplied pages.
 
 Filing hints:
@@ -38,6 +43,7 @@ Candidate pages by field:
 - unit: {unit_pages}
 - revenue: {revenue_pages}
 - net_profit: {net_profit_pages}
+- roe: {roe_pages}
 
 Page excerpts:
 {page_context}

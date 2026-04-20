@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from llama_index.core.callbacks import CallbackManager
 from llama_index.llms.openai import OpenAI
 
 from filingdelta.core.config import Settings, get_settings
@@ -11,13 +12,6 @@ from filingdelta.schemas.filing import FilingDocument
 class AnswererAgent:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
-        self._llm = OpenAI(
-            model=self._settings.filingdelta_llm_model,
-            temperature=0,
-            api_key=self._settings.require_openai_api_key(),
-            api_base=self._settings.openai_base_url,
-            strict=True,
-        )
 
     async def answer(
         self,
@@ -30,13 +24,14 @@ class AnswererAgent:
         retrieved_chunks: list[RetrievedChunk],
         external_citations: list[ChatCitation],
         external_summary: str = "",
+        callback_manager: CallbackManager | None = None,
     ) -> ChatSynthesisDraft:
         retrieved_context, document_ref_map = _build_retrieved_context(retrieved_chunks)
         external_context, external_ref_map = _build_external_context(
             external_summary=external_summary,
             external_citations=external_citations,
         )
-        result = await self._llm.astructured_predict(
+        result = await self._build_llm(callback_manager=callback_manager).astructured_predict(
             ChatSynthesisDraft,
             CHAT_ANSWER_PROMPT,
             company_name=document.company_name,
@@ -56,6 +51,16 @@ class AnswererAgent:
         result.used_chunk_ids = _resolve_document_refs(result.used_document_refs, document_ref_map)
         result.used_external_citation_ids = _resolve_external_refs(result.used_external_refs, external_ref_map)
         return result
+
+    def _build_llm(self, *, callback_manager: CallbackManager | None = None) -> OpenAI:
+        return OpenAI(
+            model=self._settings.filingdelta_llm_model,
+            temperature=0,
+            api_key=self._settings.require_openai_api_key(),
+            api_base=self._settings.openai_base_url,
+            strict=True,
+            callback_manager=callback_manager,
+        )
 
 
 def _build_retrieved_context(retrieved_chunks: list[RetrievedChunk]) -> tuple[str, dict[str, str]]:

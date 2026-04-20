@@ -12,6 +12,7 @@ _FIELD_NAMES = (
     "unit",
     "revenue",
     "net_profit",
+    "roe",
 )
 
 _FRONT_PAGE_PRIORITIES = {
@@ -20,6 +21,7 @@ _FRONT_PAGE_PRIORITIES = {
     "unit": 4,
     "revenue": 2,
     "net_profit": 2,
+    "roe": 2,
 }
 
 _SHARED_KEYWORDS = (
@@ -90,6 +92,20 @@ _FIELD_KEYWORDS = {
         "應佔盈利",
         "本公司权益持有人应占",
         "本公司權益持有人應佔",
+    ),
+    "roe": (
+        "return on equity",
+        "weighted average return on equity",
+        "roe",
+        "净资产收益率",
+        "淨資產收益率",
+        "加权平均净资产收益率",
+        "加權平均淨資產收益率",
+        "扣除非经常性损益后",
+        "扣除非經常性損益後",
+        "普通股股东",
+        "普通股股東",
+        "年化",
     ),
 }
 

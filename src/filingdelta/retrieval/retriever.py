@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from llama_index.core import VectorStoreIndex
+from llama_index.core.callbacks import CallbackManager
 from llama_index.core.schema import MetadataMode
 from llama_index.core.vector_stores import ExactMatchFilter, MetadataFilters
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -27,22 +28,17 @@ class DocumentChunkRetriever:
             client=self._client,
             collection_name=COLLECTION_NAME,
         )
-        self._embed_model = OpenAIEmbedding(
-            model=self._settings.filingdelta_embed_model,
-            api_key=self._settings.require_openai_api_key(),
-            api_base=self._settings.openai_base_url,
-        )
-
     def retrieve(
         self,
         *,
         document_id: str,
         question: str,
         top_k: int = 6,
+        callback_manager: CallbackManager | None = None,
     ) -> list[RetrievedChunk]:
         index = VectorStoreIndex.from_vector_store(
             vector_store=self._vector_store,
-            embed_model=self._embed_model,
+            embed_model=self._build_embed_model(callback_manager=callback_manager),
         )
         retriever = index.as_retriever(
             similarity_top_k=top_k,
@@ -67,6 +63,14 @@ class DocumentChunkRetriever:
                 )
             )
         return retrieved
+
+    def _build_embed_model(self, *, callback_manager: CallbackManager | None = None) -> OpenAIEmbedding:
+        return OpenAIEmbedding(
+            model=self._settings.filingdelta_embed_model,
+            api_key=self._settings.require_openai_api_key(),
+            api_base=self._settings.openai_base_url,
+            callback_manager=callback_manager,
+        )
 
 
 def _coerce_int(value: object) -> int | None:

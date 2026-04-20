@@ -16,6 +16,7 @@ type ChatThreadMessage = {
   citations: ChatCitation[];
   route: ChatResponse["route"] | null;
   retrievalMode: ChatResponse["retrieval_mode"] | null;
+  telemetry: ChatResponse["telemetry"];
   isPending?: boolean;
   isError?: boolean;
 };
@@ -89,6 +90,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       citations: [],
       route: null,
       retrievalMode: null,
+      telemetry: null,
     };
     const pendingMessageId = `${Date.now()}-assistant`;
 
@@ -102,6 +104,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
         citations: [],
         route: null,
         retrievalMode: null,
+        telemetry: null,
         isPending: true,
       },
     ]);
@@ -129,6 +132,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
                     citations: response.citations,
                     route: response.route,
                     retrievalMode: response.retrieval_mode,
+                    telemetry: response.telemetry,
                   }
                 : message,
             ),
@@ -145,6 +149,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
         citations: [],
         route: null,
         retrievalMode: null,
+        telemetry: null,
         isError: true,
       });
     } finally {
@@ -316,6 +321,60 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
                     )}
                   </div>
                 ) : null}
+
+                {message.telemetry ? (
+                  <details className="chat-telemetry">
+                    <summary>
+                      调试指标
+                      <span className="chat-telemetry__summary">
+                        {formatLatency(message.telemetry.total_latency_ms)} · {message.telemetry.route_type}
+                      </span>
+                    </summary>
+                    <div className="chat-telemetry__grid">
+                      <div className="chat-telemetry__group">
+                        <h5>总览</h5>
+                        <ul>
+                          <li>总耗时：{formatLatency(message.telemetry.total_latency_ms)}</li>
+                          <li>路由：{message.telemetry.route_type}</li>
+                          <li>成功：{message.telemetry.succeeded ? "是" : "否"}</li>
+                        </ul>
+                      </div>
+                      <div className="chat-telemetry__group">
+                        <h5>步骤耗时</h5>
+                        <ul>
+                          {renderStep("首轮建索引", message.telemetry.steps.index_build_ms)}
+                          {renderStep("上下文化", message.telemetry.steps.contextualizer_ms)}
+                          {renderStep("路由", message.telemetry.steps.router_ms)}
+                          {renderStep("规划", message.telemetry.steps.planner_ms)}
+                          {renderStep("文档检索", message.telemetry.steps.document_retrieval_ms)}
+                          {renderStep("外部检索", message.telemetry.steps.external_search_ms)}
+                          {renderStep("回答生成", message.telemetry.steps.answerer_ms)}
+                          {renderStep("记忆摘要", message.telemetry.steps.memory_summarizer_ms)}
+                        </ul>
+                      </div>
+                      <div className="chat-telemetry__group">
+                        <h5>Token / Usage</h5>
+                        <ul>
+                          <li>LLM 输入：{message.telemetry.usage.llm_prompt_tokens}</li>
+                          <li>LLM 输出：{message.telemetry.usage.llm_completion_tokens}</li>
+                          <li>Embedding：{message.telemetry.usage.embedding_tokens}</li>
+                          <li>Web search：{message.telemetry.usage.web_search_total_tokens}</li>
+                          <li>总 token：{message.telemetry.usage.total_tokens}</li>
+                        </ul>
+                      </div>
+                      <div className="chat-telemetry__group">
+                        <h5>检索</h5>
+                        <ul>
+                          <li>document top-k：{message.telemetry.retrieval.document_top_k}</li>
+                          <li>命中文档 chunks：{message.telemetry.retrieval.document_retrieved_chunks}</li>
+                          <li>外部来源数：{message.telemetry.retrieval.external_sources_count}</li>
+                          <li>使用文档引用：{message.telemetry.retrieval.used_document_citations_count}</li>
+                          <li>使用外部引用：{message.telemetry.retrieval.used_external_citations_count}</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </details>
+                ) : null}
               </article>
             ))}
           </div>
@@ -349,4 +408,19 @@ function createSessionId(): string {
     return crypto.randomUUID();
   }
   return `chat-session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function formatLatency(value: number | null): string {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "--";
+  }
+  return `${value.toFixed(0)} ms`;
+}
+
+function renderStep(label: string, value: number | null) {
+  return (
+    <li key={label}>
+      {label}：{formatLatency(value)}
+    </li>
+  );
 }

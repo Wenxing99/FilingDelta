@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from time import perf_counter
 from uuid import uuid4
 
 from llama_index.core.workflow import StopEvent
 
 from filingdelta.core.config import Settings, get_settings
-from filingdelta.schemas.demo import DemoRun
+from filingdelta.schemas.demo import DemoRun, DemoRunArtifactsTelemetry, DemoRunStageTelemetry, DemoRunTelemetry
 from filingdelta.schemas.filing import FilingSource
+from filingdelta.schemas.workflow import SingleFilingWorkflowResult
 from filingdelta.services.review_feedback import ReviewFeedbackService
 from filingdelta.workflows.events import WorkflowProgressEvent
 from filingdelta.workflows.single_filing import SingleFilingWorkflow
@@ -34,6 +37,61 @@ STAGE_INDEX: dict[str, int] = {
     "failed": 0,
 }
 
+TIMED_STAGES = ("orchestrate", "reader", "fact_extractor", "verifier")
+
+
+@dataclass
+class _RunTelemetryTracker:
+    started_at: float = field(default_factory=perf_counter)
+    current_stage: str | None = None
+    current_stage_started_at: float | None = None
+    completed_total_ms: float | None = None
+    stage_timings: dict[str, float | None] = field(
+        default_factory=lambda: {stage: None for stage in TIMED_STAGES}
+    )
+
+    def transition(self, next_stage: str) -> None:
+        if next_stage == self.current_stage:
+            return
+
+        now = perf_counter()
+        self._finalize_current_stage(now)
+
+        if next_stage in self.stage_timings:
+            self.current_stage = next_stage
+            self.current_stage_started_at = now
+        else:
+            if next_stage in {"done", "failed"} and self.completed_total_ms is None:
+                self.completed_total_ms = round((now - self.started_at) * 1000, 2)
+            self.current_stage = next_stage
+            self.current_stage_started_at = None
+
+    def snapshot(self) -> DemoRunStageTelemetry:
+        now = perf_counter()
+        stage_timings = dict(self.stage_timings)
+
+        if self.current_stage in stage_timings and self.current_stage_started_at is not None:
+            current_elapsed = round((now - self.current_stage_started_at) * 1000, 2)
+            completed = stage_timings[self.current_stage] or 0.0
+            stage_timings[self.current_stage] = round(completed + current_elapsed, 2)
+
+        return DemoRunStageTelemetry(
+            orchestrate_ms=stage_timings["orchestrate"],
+            reader_ms=stage_timings["reader"],
+            fact_extractor_ms=stage_timings["fact_extractor"],
+            verifier_ms=stage_timings["verifier"],
+            total_ms=self.completed_total_ms or round((now - self.started_at) * 1000, 2),
+        )
+
+    def _finalize_current_stage(self, now: float) -> None:
+        if self.current_stage not in self.stage_timings or self.current_stage_started_at is None:
+            return
+
+        elapsed = round((now - self.current_stage_started_at) * 1000, 2)
+        previous = self.stage_timings[self.current_stage] or 0.0
+        self.stage_timings[self.current_stage] = round(previous + elapsed, 2)
+        self.current_stage_started_at = None
+
 
 class DemoRunManager:
     def __init__(self, settings: Settings | None = None) -> None:
@@ -41,6 +99,7 @@ class DemoRunManager:
         self._runs: dict[str, DemoRun] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._sources: dict[str, FilingSource] = {}
+        self._telemetry_trackers: dict[str, _RunTelemetryTracker] = {}
         self._lock = asyncio.Lock()
         self._review_feedback = ReviewFeedbackService(settings=self._settings)
 
@@ -60,6 +119,7 @@ class DemoRunManager:
         async with self._lock:
             self._runs[run_id] = run
             self._sources[run_id] = source
+            self._telemetry_trackers[run_id] = _RunTelemetryTracker()
 
         task = asyncio.create_task(self._execute_run(run_id=run_id, source=source))
         self._tasks[run_id] = task
@@ -86,11 +146,17 @@ class DemoRunManager:
                 result=current.result,
                 item_key=item_key,
             )
+            telemetry = self._build_run_telemetry(
+                run_id=run_id,
+                result=updated_result,
+                succeeded=current.status == "succeeded",
+            )
             self._runs[run_id] = current.model_copy(
                 update={
                     "updated_at": datetime.now(UTC),
                     "progress_message": "已手动确认一条待确认项。",
                     "result": updated_result,
+                    "telemetry": telemetry,
                 }
             )
             return self._runs[run_id].model_copy(deep=True)
@@ -123,11 +189,17 @@ class DemoRunManager:
 
         async with self._lock:
             latest = self._runs[run_id]
+            telemetry = self._build_run_telemetry(
+                run_id=run_id,
+                result=updated_result,
+                succeeded=latest.status == "succeeded",
+            )
             self._runs[run_id] = latest.model_copy(
                 update={
                     "updated_at": datetime.now(UTC),
                     "progress_message": "已重新处理一条待确认项。",
                     "result": updated_result,
+                    "telemetry": telemetry,
                 }
             )
             return self._runs[run_id].model_copy(deep=True)
@@ -160,11 +232,17 @@ class DemoRunManager:
 
         async with self._lock:
             latest = self._runs[run_id]
+            telemetry = self._build_run_telemetry(
+                run_id=run_id,
+                result=updated_result,
+                succeeded=latest.status == "succeeded",
+            )
             self._runs[run_id] = latest.model_copy(
                 update={
                     "updated_at": datetime.now(UTC),
                     "progress_message": _feedback_progress_message(feedback_category, "done"),
                     "result": updated_result,
+                    "telemetry": telemetry,
                 }
             )
             return self._runs[run_id].model_copy(deep=True)
@@ -181,6 +259,15 @@ class DemoRunManager:
     ) -> None:
         async with self._lock:
             current = self._runs[run_id]
+            tracker = self._telemetry_trackers.get(run_id)
+            if tracker is not None:
+                tracker.transition(stage)
+            next_result = result if result is not None else current.result
+            telemetry = self._build_run_telemetry(
+                run_id=run_id,
+                result=next_result,
+                succeeded=status == "succeeded",
+            )
             self._runs[run_id] = current.model_copy(
                 update={
                     "status": status,
@@ -189,8 +276,9 @@ class DemoRunManager:
                     "stage_index": STAGE_INDEX[stage],
                     "progress_message": progress_message,
                     "updated_at": datetime.now(UTC),
-                    "result": result if result is not None else current.result,
+                    "result": next_result,
                     "error_message": error_message,
+                    "telemetry": telemetry,
                 }
             )
 
@@ -233,6 +321,21 @@ class DemoRunManager:
         finally:
             self._tasks.pop(run_id, None)
 
+    def _build_run_telemetry(
+        self,
+        *,
+        run_id: str,
+        result: SingleFilingWorkflowResult | None,
+        succeeded: bool,
+    ) -> DemoRunTelemetry:
+        tracker = self._telemetry_trackers.get(run_id)
+        stage_timings = tracker.snapshot() if tracker is not None else DemoRunStageTelemetry()
+        return DemoRunTelemetry(
+            succeeded=succeeded,
+            stage_timings=stage_timings,
+            artifacts=_build_artifacts_telemetry(result),
+        )
+
 
 _demo_run_manager: DemoRunManager | None = None
 
@@ -242,6 +345,22 @@ def get_demo_run_manager() -> DemoRunManager:
     if _demo_run_manager is None:
         _demo_run_manager = DemoRunManager()
     return _demo_run_manager
+
+
+def _build_artifacts_telemetry(
+    result: SingleFilingWorkflowResult | None,
+) -> DemoRunArtifactsTelemetry:
+    if result is None:
+        return DemoRunArtifactsTelemetry()
+
+    return DemoRunArtifactsTelemetry(
+        total_pages=result.total_pages,
+        chunk_count=result.chunk_count,
+        summary_sections_count=len(result.summary_sections),
+        summary_points_count=sum(len(section.points) for section in result.summary_sections),
+        verification_issues_count=result.review.pending_confirmation_count,
+        needs_human_review=result.needs_human_review,
+    )
 
 
 def _feedback_progress_message(feedback_category: str, phase: str) -> str:

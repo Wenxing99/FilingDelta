@@ -87,12 +87,53 @@ class ExternalEvidenceResult(BaseModel):
     search_kind: Literal["concept", "background", "concept_and_background"]
     answer_text: str
     citations: list[ChatCitation] = Field(default_factory=list)
+    usage: dict[str, int | dict[str, int] | None] | None = None
 
 
 class ChatAnswerSection(BaseModel):
     section_type: Literal["document_evidence", "external_evidence", "analysis_and_limits"]
     title: str
     items: list[str] = Field(default_factory=list)
+
+
+class ChatStepTelemetry(BaseModel):
+    index_build_ms: float | None = None
+    contextualizer_ms: float | None = None
+    router_ms: float | None = None
+    planner_ms: float | None = None
+    document_retrieval_ms: float | None = None
+    external_search_ms: float | None = None
+    answerer_ms: float | None = None
+    memory_summarizer_ms: float | None = None
+
+
+class ChatUsageTelemetry(BaseModel):
+    llm_prompt_tokens: int = 0
+    llm_completion_tokens: int = 0
+    llm_total_tokens: int = 0
+    embedding_tokens: int = 0
+    web_search_input_tokens: int = 0
+    web_search_output_tokens: int = 0
+    web_search_total_tokens: int = 0
+    reasoning_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ChatRetrievalTelemetry(BaseModel):
+    document_top_k: int = 0
+    document_retrieved_chunks: int = 0
+    external_sources_count: int = 0
+    used_document_citations_count: int = 0
+    used_external_citations_count: int = 0
+
+
+class ChatTelemetry(BaseModel):
+    route_type: Literal["document_only", "concept_only", "mixed", "unsupported"] = "document_only"
+    total_latency_ms: float = 0.0
+    succeeded: bool = True
+    steps: ChatStepTelemetry = Field(default_factory=ChatStepTelemetry)
+    usage: ChatUsageTelemetry = Field(default_factory=ChatUsageTelemetry)
+    retrieval: ChatRetrievalTelemetry = Field(default_factory=ChatRetrievalTelemetry)
 
 
 class ChatAnswer(BaseModel):
@@ -111,3 +152,4 @@ class ChatAnswer(BaseModel):
         "mixed_document_external",
         "unsupported",
     ] = "semantic_with_filters"
+    telemetry: ChatTelemetry | None = None

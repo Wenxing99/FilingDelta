@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from llama_index.core.callbacks import CallbackManager
 from llama_index.llms.openai import OpenAI
 
 from filingdelta.core.config import Settings, get_settings
@@ -11,13 +12,6 @@ from filingdelta.schemas.filing import FilingDocument
 class ChatMemorySummarizerAgent:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or get_settings()
-        self._llm = OpenAI(
-            model=self._settings.filingdelta_llm_model,
-            temperature=0,
-            api_key=self._settings.require_openai_api_key(),
-            api_base=self._settings.openai_base_url,
-            strict=True,
-        )
 
     async def summarize(
         self,
@@ -27,8 +21,9 @@ class ChatMemorySummarizerAgent:
         recent_messages: list[ChatConversationMessage],
         user_question: str,
         assistant_answer: str,
+        callback_manager: CallbackManager | None = None,
     ) -> ConversationSummary:
-        return await self._llm.astructured_predict(
+        return await self._build_llm(callback_manager=callback_manager).astructured_predict(
             ConversationSummary,
             CHAT_MEMORY_SUMMARY_PROMPT,
             company_name=document.company_name,
@@ -40,6 +35,16 @@ class ChatMemorySummarizerAgent:
             recent_messages=_format_recent_messages(recent_messages),
             user_question=user_question,
             assistant_answer=assistant_answer,
+        )
+
+    def _build_llm(self, *, callback_manager: CallbackManager | None = None) -> OpenAI:
+        return OpenAI(
+            model=self._settings.filingdelta_llm_model,
+            temperature=0,
+            api_key=self._settings.require_openai_api_key(),
+            api_base=self._settings.openai_base_url,
+            strict=True,
+            callback_manager=callback_manager,
         )
 
 

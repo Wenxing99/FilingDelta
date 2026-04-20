@@ -14,6 +14,7 @@ import {
   approveDemoRunIssue,
   createDemoRun,
   getDemoRun,
+  importDemoDocument,
   listDemoDocuments,
   rerunDemoRunFeedback,
   rerunDemoRunIssue,
@@ -33,6 +34,7 @@ export default function App() {
   const [run, setRun] = useState<DemoRun | null>(null);
   const [activeCitationTarget, setActiveCitationTarget] = useState<CitationTarget | null>(null);
   const [isStartingRun, setIsStartingRun] = useState(false);
+  const [isImportingDocument, setIsImportingDocument] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [showVerifiedOnly, setShowVerifiedOnly] = useState(false);
   const [activeIssueActionKey, setActiveIssueActionKey] = useState<string | null>(null);
@@ -55,7 +57,9 @@ export default function App() {
 
   const result = run?.result ?? null;
   const isRunning = run?.status === "queued" || run?.status === "running";
-  const shouldShowAnalysisProgress = Boolean(run && (run.status === "queued" || run.status === "running"));
+  const hasPendingReviewAction = activeIssueActionKey !== null || activeFeedbackActionKey !== null;
+  const isDocumentSelectionLocked = isRunning || isStartingRun || isImportingDocument || hasPendingReviewAction;
+  const shouldShowAnalysisProgress = Boolean(run);
   const workspaceStyle = useMemo(
     () =>
       ({
@@ -248,7 +252,7 @@ export default function App() {
   }
 
   async function handleStartRun() {
-    if (!selectedDocumentId) {
+    if (!selectedDocumentId || isDocumentSelectionLocked) {
       return;
     }
 
@@ -263,6 +267,28 @@ export default function App() {
       setPageError(error instanceof Error ? error.message : "启动分析失败。");
     } finally {
       setIsStartingRun(false);
+    }
+  }
+
+  async function handleImportDocument(file: File) {
+    if (isDocumentSelectionLocked) {
+      return;
+    }
+
+    try {
+      setPageError(null);
+      setIsImportingDocument(true);
+      const importedDocument = await importDemoDocument(file);
+      const nextDocuments = await listDemoDocuments();
+      setDocuments(nextDocuments);
+      setSelectedDocumentId(importedDocument.document_id);
+      setRun(null);
+      setActiveCitationTarget(null);
+      setShowVerifiedOnly(false);
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : "导入文件失败。");
+    } finally {
+      setIsImportingDocument(false);
     }
   }
 
@@ -328,18 +354,20 @@ export default function App() {
           <DocumentSelector
             documents={documents}
             selectedDocumentId={selectedDocumentId}
-            disabled={isRunning || isStartingRun}
+            disabled={isDocumentSelectionLocked}
+            isImporting={isImportingDocument}
             onChange={(documentId) => {
               setSelectedDocumentId(documentId);
               setRun(null);
               setActiveCitationTarget(null);
               setShowVerifiedOnly(false);
             }}
+            onImport={(file) => void handleImportDocument(file)}
           />
           <button
             type="button"
             className="primary-button"
-            disabled={!selectedDocumentId || isRunning || isStartingRun}
+            disabled={!selectedDocumentId || isDocumentSelectionLocked}
             onClick={() => void handleStartRun()}
           >
             {isRunning || isStartingRun ? "分析中..." : "开始分析"}
@@ -359,6 +387,7 @@ export default function App() {
           <DocumentOverview document={selectedDocument} />
           <HeadlineMetricsPanel
             metrics={result?.headline_metrics ?? null}
+            document={selectedDocument}
             showVerifiedOnly={showVerifiedOnly}
             activeTargetId={activeCitationTarget?.id ?? null}
             onSelect={setActiveCitationTarget}
@@ -463,14 +492,14 @@ function buildInitialCitationTarget(result: WorkflowResult, showVerifiedOnly = f
     };
   }
 
-  const metricEntries = [
+  const orderedMetricEntries = [
+    ["fiscal_period", "报告期", result.headline_metrics.fiscal_period],
     ["revenue", "营业收入", result.headline_metrics.revenue],
     ["net_profit", "归属于股东净利润", result.headline_metrics.net_profit],
-    ["unit", "单位", result.headline_metrics.unit],
-    ["fiscal_period", "报告期", result.headline_metrics.fiscal_period],
+    ["roe", "净资产收益率", result.headline_metrics.roe],
   ] as const;
 
-  for (const [key, label, field] of metricEntries) {
+  for (const [key, label, field] of orderedMetricEntries) {
     if (showVerifiedOnly && (field.value === null || !field.citations[0])) {
       continue;
     }
@@ -494,10 +523,10 @@ function buildInitialCitationTarget(result: WorkflowResult, showVerifiedOnly = f
 function isCitationTargetVisible(target: CitationTarget, result: WorkflowResult): boolean {
   if (target.kind === "metric") {
     const metricKey = target.id.replace("metric:", "") as
+      | "fiscal_period"
       | "revenue"
       | "net_profit"
-      | "unit"
-      | "fiscal_period";
+      | "roe";
     const field = result.headline_metrics[metricKey];
     return Boolean(field && field.value !== null && field.citations[0]);
   }
@@ -533,10 +562,10 @@ function refreshCitationTarget(
 
   if (target.kind === "metric") {
     const metricKey = target.id.replace("metric:", "") as
+      | "fiscal_period"
       | "revenue"
       | "net_profit"
-      | "unit"
-      | "fiscal_period";
+      | "roe";
     const field = result.headline_metrics[metricKey];
     if (!field || field.value === null) {
       return buildInitialCitationTarget(result, showVerifiedOnly);

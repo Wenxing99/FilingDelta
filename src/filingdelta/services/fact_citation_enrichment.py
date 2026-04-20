@@ -20,6 +20,7 @@ _HEADLINE_FACT_FIELDS = (
     "unit",
     "revenue",
     "net_profit",
+    "roe",
 )
 
 
@@ -72,6 +73,9 @@ def _build_search_candidates(field_name: str, value: str | float | int) -> list[
     if field_name == "unit" and isinstance(value, str):
         return _build_unit_candidates(value)
 
+    if field_name == "roe" and isinstance(value, (int, float)):
+        return _build_roe_candidates(float(value))
+
     if isinstance(value, str):
         candidate = value.strip()
         return [candidate] if candidate else []
@@ -91,6 +95,33 @@ def _build_search_candidates(field_name: str, value: str | float | int) -> list[
         pass
 
     return _dedupe_preserve_order(candidates)
+
+
+def _build_roe_candidates(value: float) -> list[str]:
+    candidates = _build_numeric_candidates(value)
+    if abs(value) <= 1:
+        candidates.extend(_build_numeric_candidates(value * 100))
+    elif abs(value) <= 100:
+        candidates.extend(_build_numeric_candidates(value / 100))
+    return _dedupe_preserve_order(candidates)
+
+
+def _build_numeric_candidates(value: float | int) -> list[str]:
+    candidates: list[str] = []
+    numeric_text = str(value).strip()
+    if numeric_text.endswith(".0"):
+        numeric_text = numeric_text[:-2]
+
+    if numeric_text:
+        candidates.append(numeric_text)
+
+    try:
+        integer_value = int(float(value))
+        candidates.append(f"{integer_value:,}")
+    except (TypeError, ValueError):
+        pass
+
+    return candidates
 
 
 def _build_unit_candidates(value: str) -> list[str]:
@@ -202,6 +233,7 @@ def _iter_pages_for_field(parsed_filing: ParsedFiling, field_name: str) -> Itera
         "unit": 6,
         "revenue": 8,
         "net_profit": 8,
+        "roe": 8,
     }.get(field_name, 0)
 
     pages = parsed_filing.pages

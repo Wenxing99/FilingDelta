@@ -9,6 +9,7 @@ from llama_index.llms.openai import OpenAI
 
 from filingdelta.core.config import Settings, get_settings
 from filingdelta.ingestion.page_locators import CandidatePageLocator
+from filingdelta.ingestion.table_metrics import extract_table_headline_metrics
 from filingdelta.prompts.fact_extraction import HEADLINE_METRICS_EXTRACTION_PROMPT
 from filingdelta.schemas.fact_extraction import (
     HeadlineMetricsStructuredExtraction,
@@ -259,6 +260,36 @@ def _refine_structured_extraction(
         selection=selection,
         current=structured.roe,
     )
+    table_metrics = extract_table_headline_metrics(
+        source=source,
+        parsed_filing=parsed_filing,
+        selection=selection,
+    )
+    structured = _merge_table_metrics(
+        structured=structured,
+        table_metrics=table_metrics.structured,
+        has_table_signal=table_metrics.has_table_signal,
+    )
+    return structured
+
+
+def _merge_table_metrics(
+    *,
+    structured: HeadlineMetricsStructuredExtraction,
+    table_metrics: HeadlineMetricsStructuredExtraction,
+    has_table_signal: bool,
+) -> HeadlineMetricsStructuredExtraction:
+    if table_metrics.unit.value:
+        structured.unit = table_metrics.unit
+
+    for field_name in ("revenue", "net_profit", "roe"):
+        table_field = getattr(table_metrics, field_name)
+        if table_field.value is not None:
+            setattr(structured, field_name, table_field)
+
+    if has_table_signal and table_metrics.roe.value is None:
+        structured.roe = NumericFactEvidence()
+
     return structured
 
 

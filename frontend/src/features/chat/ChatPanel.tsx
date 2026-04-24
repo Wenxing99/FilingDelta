@@ -28,8 +28,14 @@ type ChatSessionState = {
   messages: ChatThreadMessage[];
 };
 
+type ActiveChatRequest = {
+  controller: AbortController;
+};
+
 export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
+  const activeRequestRef = useRef<ActiveChatRequest | null>(null);
+  const isMountedRef = useRef(true);
   const [draft, setDraft] = useState("");
   const [sessions, setSessions] = useState<Record<string, ChatSessionState>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -39,6 +45,16 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
   const messages = activeSession?.messages ?? [];
 
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      abortActiveRequest();
+    };
+  }, []);
+
+  useEffect(() => {
+    abortActiveRequest();
+    setIsSubmitting(false);
     if (!currentDocumentId) {
       setDraft("");
       return;
@@ -97,6 +113,10 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     const pendingMessageId = `${Date.now()}-assistant`;
     const documentId = document.document_id;
     const sessionId = activeSession.sessionId;
+    const abortController = new AbortController();
+    activeRequestRef.current = { controller: abortController };
+    const shouldApplyStreamEvent = () =>
+      activeRequestRef.current?.controller === abortController && !abortController.signal.aborted;
 
     appendMessages(documentId, [
       userMessage,
@@ -117,60 +137,99 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     setIsSubmitting(true);
 
     try {
-      await askDemoChatStream(documentId, sessionId, question, {
-        onStatus: (event) => {
-          updateMessage(documentId, pendingMessageId, (message) => ({
-            ...message,
-            streamStatus: event.message,
-          }));
-        },
-        onDelta: (event) => {
-          updateMessage(documentId, pendingMessageId, (message) => ({
-            ...message,
-            content: `${message.content}${event.text}`,
-            streamStatus: undefined,
-          }));
-        },
-        onCitations: (event) => {
-          updateMessage(documentId, pendingMessageId, (message) => ({
-            ...message,
-            citations: event.citations,
-          }));
-        },
-        onTelemetry: (event) => {
-          updateMessage(documentId, pendingMessageId, (message) => ({
-            ...message,
-            telemetry: event.telemetry,
-          }));
-        },
-        onDone: (event) => {
-          const response = event.response;
-          replacePendingMessage(documentId, pendingMessageId, {
-            id: pendingMessageId,
-            role: "assistant",
-            content: response.answer,
-            sections: response.sections,
-            citations: response.citations,
-            route: response.route,
-            retrievalMode: response.retrieval_mode,
-            telemetry: response.telemetry,
-          });
-          setSessions((current) => {
-            const currentSession = current[documentId];
-            if (!currentSession) {
-              return current;
+      await askDemoChatStream(
+        documentId,
+        sessionId,
+        question,
+        {
+          onStatus: (event) => {
+            if (!shouldApplyStreamEvent()) {
+              return;
             }
-            return {
-              ...current,
-              [documentId]: {
-                ...currentSession,
-                sessionId: response.session_id,
-              },
-            };
-          });
+            updateMessage(documentId, pendingMessageId, (message) => ({
+              ...message,
+              streamStatus: event.message,
+            }));
+          },
+          onDelta: (event) => {
+            if (!shouldApplyStreamEvent()) {
+              return;
+            }
+            updateMessage(documentId, pendingMessageId, (message) => ({
+              ...message,
+              content: `${message.content}${event.text}`,
+              streamStatus: undefined,
+            }));
+          },
+          onCitations: (event) => {
+            if (!shouldApplyStreamEvent()) {
+              return;
+            }
+            updateMessage(documentId, pendingMessageId, (message) => ({
+              ...message,
+              citations: event.citations,
+            }));
+          },
+          onTelemetry: (event) => {
+            if (!shouldApplyStreamEvent()) {
+              return;
+            }
+            updateMessage(documentId, pendingMessageId, (message) => ({
+              ...message,
+              telemetry: event.telemetry,
+            }));
+          },
+          onDone: (event) => {
+            if (!shouldApplyStreamEvent()) {
+              return;
+            }
+            const response = event.response;
+            replacePendingMessage(documentId, pendingMessageId, {
+              id: pendingMessageId,
+              role: "assistant",
+              content: response.answer,
+              sections: response.sections,
+              citations: response.citations,
+              route: response.route,
+              retrievalMode: response.retrieval_mode,
+              telemetry: response.telemetry,
+            });
+            setSessions((current) => {
+              const currentSession = current[documentId];
+              if (!currentSession) {
+                return current;
+              }
+              return {
+                ...current,
+                [documentId]: {
+                  ...currentSession,
+                  sessionId: response.session_id,
+                },
+              };
+            });
+          },
         },
-      });
+        {
+          signal: abortController.signal,
+        },
+      );
     } catch (error) {
+      if (!isMountedRef.current) {
+        return;
+      }
+      if (abortController.signal.aborted || isAbortError(error)) {
+        replacePendingMessage(documentId, pendingMessageId, {
+          id: pendingMessageId,
+          role: "assistant",
+          content: "已取消本次问答。",
+          sections: [],
+          citations: [],
+          route: null,
+          retrievalMode: null,
+          telemetry: null,
+        });
+        return;
+      }
       const message = error instanceof Error ? error.message : "问答请求失败。";
       replacePendingMessage(documentId, pendingMessageId, {
         id: pendingMessageId,
@@ -184,7 +243,13 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
         isError: true,
       });
     } finally {
-      setIsSubmitting(false);
+      const isActiveRequest = activeRequestRef.current?.controller === abortController;
+      if (isActiveRequest) {
+        activeRequestRef.current = null;
+      }
+      if (isActiveRequest && isMountedRef.current) {
+        setIsSubmitting(false);
+      }
     }
   }
 
@@ -259,6 +324,15 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       },
     }));
     setDraft("");
+  }
+
+  function abortActiveRequest() {
+    const activeRequest = activeRequestRef.current;
+    if (!activeRequest) {
+      return;
+    }
+    activeRequest.controller.abort();
+    activeRequestRef.current = null;
   }
 
   function renderRetrievalMode(mode: ChatResponse["retrieval_mode"] | null): string | null {
@@ -459,6 +533,10 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       </form>
     </section>
   );
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 function createSessionId(): string {

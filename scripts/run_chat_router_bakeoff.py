@@ -24,6 +24,14 @@ from filingdelta.services.demo_documents import get_demo_document_sources
 
 
 DEFAULT_OUTPUT = Path("data/outputs/eval/chat_router_bakeoff.json")
+METHODOLOGY_NOTES = [
+    (
+        "direct-json and direct-json-object use the Chat Completions default "
+        "temperature because gpt-5-nano rejects custom temperature values on "
+        "that endpoint; treat them as exploratory backend comparisons rather "
+        "than strict deterministic replacements for the LlamaIndex router."
+    )
+]
 
 
 class RouterBackend(Protocol):
@@ -112,6 +120,7 @@ async def main() -> None:
             "case_ids": [case.case_id for case in selected_cases],
             "output_path": str((REPO_ROOT / args.output).resolve()),
             "total_wall_ms": round((time.perf_counter() - started) * 1000),
+            "methodology_notes": METHODOLOGY_NOTES,
         },
         "summary": summarize_router_results(results),
         "cases": [result_to_json(result) for result in results],

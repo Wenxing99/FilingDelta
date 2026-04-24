@@ -86,9 +86,15 @@ export async function rerunDemoRunFeedback(
   return payload.run;
 }
 
-export async function askDemoChat(documentId: string, sessionId: string, question: string): Promise<ChatResponse> {
+export async function askDemoChat(
+  documentId: string,
+  sessionId: string,
+  question: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<ChatResponse> {
   const payload = await requestJson<{ response: ChatResponse }>("/api/demo/chat", {
     method: "POST",
+    signal: options.signal,
     body: JSON.stringify({
       document_id: documentId,
       session_id: sessionId,
@@ -103,9 +109,11 @@ export async function askDemoChatStream(
   sessionId: string,
   question: string,
   handlers: ChatStreamHandlers,
+  options: { signal?: AbortSignal } = {},
 ): Promise<ChatResponse> {
   const response = await fetch(`${API_BASE_URL}/api/demo/chat/stream`, {
     method: "POST",
+    signal: options.signal,
     headers: {
       "Content-Type": "application/json",
     },
@@ -120,63 +128,72 @@ export async function askDemoChatStream(
     throw await buildRequestError(response);
   }
   if (!response.body) {
-    return askDemoChat(documentId, sessionId, question);
+    return askDemoChat(documentId, sessionId, question, options);
   }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let finalResponse: ChatResponse | null = null;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
 
-    let newlineIndex = buffer.indexOf("\n");
-    while (newlineIndex >= 0) {
-      const rawLine = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
-      if (rawLine) {
-        const event = parseChatStreamEvent(rawLine);
-        if (event.type === "error") {
-          throw new Error(event.message || "问答请求失败。");
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex >= 0) {
+        const rawLine = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        if (rawLine) {
+          const event = parseChatStreamEvent(rawLine);
+          if (event.type === "error") {
+            throw new Error(event.message || "问答请求失败。");
+          }
+          if (event.type === "status") {
+            handlers.onStatus?.(event);
+          } else if (event.type === "delta") {
+            handlers.onDelta?.(event);
+          } else if (event.type === "citations") {
+            handlers.onCitations?.(event);
+          } else if (event.type === "telemetry") {
+            handlers.onTelemetry?.(event);
+          } else if (event.type === "done") {
+            handlers.onDone?.(event);
+            return event.response;
+          }
         }
-        if (event.type === "status") {
-          handlers.onStatus?.(event);
-        } else if (event.type === "delta") {
-          handlers.onDelta?.(event);
-        } else if (event.type === "citations") {
-          handlers.onCitations?.(event);
-        } else if (event.type === "telemetry") {
-          handlers.onTelemetry?.(event);
-        } else if (event.type === "done") {
-          finalResponse = event.response;
-          handlers.onDone?.(event);
-        }
+        newlineIndex = buffer.indexOf("\n");
       }
-      newlineIndex = buffer.indexOf("\n");
+
+      if (done) {
+        break;
+      }
     }
 
-    if (done) {
-      break;
+    const remaining = buffer.trim();
+    if (remaining) {
+      const event = parseChatStreamEvent(remaining);
+      if (event.type === "done") {
+        handlers.onDone?.(event);
+        return event.response;
+      } else if (event.type === "error") {
+        throw new Error(event.message || "问答请求失败。");
+      }
+    }
+  } finally {
+    try {
+      void reader.cancel().catch(() => undefined);
+    } catch {
+      // The UI should recover once the logical done event arrives.
+    }
+    try {
+      reader.releaseLock();
+    } catch {
+      // Releasing is best-effort; it must not keep the composer disabled.
     }
   }
 
-  const remaining = buffer.trim();
-  if (remaining) {
-    const event = parseChatStreamEvent(remaining);
-    if (event.type === "done") {
-      finalResponse = event.response;
-      handlers.onDone?.(event);
-    } else if (event.type === "error") {
-      throw new Error(event.message || "问答请求失败。");
-    }
-  }
-
-  if (!finalResponse) {
-    throw new Error("问答请求未返回完整结果。");
-  }
-  return finalResponse;
+  throw new Error("问答请求未返回完整结果。");
 }
 
 async function buildRequestError(response: Response): Promise<Error> {

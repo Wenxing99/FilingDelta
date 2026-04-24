@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import mimetypes
 from collections.abc import AsyncIterator
@@ -246,9 +247,14 @@ async def _stream_demo_chat(
                 "response": answer.model_dump(mode="json"),
             }
         )
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
     finally:
         if not task.done():
             task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 def _encode_stream_event(event: dict[str, object]) -> str:

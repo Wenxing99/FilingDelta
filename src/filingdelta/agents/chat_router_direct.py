@@ -11,7 +11,7 @@ from filingdelta.schemas.filing import FilingDocument
 
 
 class DirectJsonChatRouterAgent:
-    """Small direct-OpenAI router used for router bake-off experiments."""
+    """Small direct-OpenAI router used for exploratory router bake-off experiments."""
 
     def __init__(
         self,
@@ -32,6 +32,10 @@ class DirectJsonChatRouterAgent:
         question: str,
         document: FilingDocument,
     ) -> ChatRouteDecision:
+        # Do not add `temperature=0` here. The gpt-5-nano Chat Completions
+        # endpoint rejects non-default temperature values, so this direct
+        # wrapper is useful as an exploratory backend comparison, not as a
+        # strict deterministic replacement test for the LlamaIndex router.
         payload = {
             "model": self._model,
             "messages": [

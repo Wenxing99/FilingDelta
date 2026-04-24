@@ -61,6 +61,29 @@ def test_stream_demo_chat_emits_status_delta_and_done() -> None:
     asyncio.run(scenario())
 
 
+def test_stream_demo_chat_cancels_service_task_when_closed() -> None:
+    async def scenario() -> None:
+        payload = DemoChatRequest(
+            document_id="doc-test",
+            session_id="session-test",
+            question="招商银行客户存款有什么变化？",
+        )
+        service = _SlowChatService()
+        stream = _stream_demo_chat(
+            payload=payload,
+            source=object(),
+            service=service,
+        )
+
+        first_line = await stream.__anext__()
+        assert json.loads(first_line)["type"] == "status"
+
+        await stream.aclose()
+        await asyncio.wait_for(service.cancelled.wait(), timeout=1.0)
+
+    asyncio.run(scenario())
+
+
 class _FakeChatService:
     async def ask(
         self,
@@ -78,3 +101,24 @@ class _FakeChatService:
             question=question,
             answer="客户存款规模增长，活期占比下降。",
         )
+
+
+class _SlowChatService:
+    def __init__(self) -> None:
+        self.cancelled = asyncio.Event()
+
+    async def ask(
+        self,
+        *,
+        document_id: str,
+        source: object,
+        session_id: str | None,
+        question: str,
+        status_callback,
+    ) -> ChatAnswer:
+        await status_callback("router", "正在判断问题类型...")
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise

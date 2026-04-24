@@ -33,6 +33,12 @@ class ParserKind(str, Enum):
     FALLBACK = "fallback"
 
 
+class EvidenceKind(str, Enum):
+    PAGE_TEXT = "page_text"
+    SECTION_TEXT = "section_text"
+    TABLE_ROW = "table_row"
+
+
 class FilingSource(BaseModel):
     source_path: Path
     company_name: str
@@ -85,6 +91,27 @@ class FilingChunk(BaseModel):
     chunk_id: str
     text: str
     metadata: ChunkMetadata
+
+
+class EvidenceMetadata(BaseModel):
+    document_id: str
+    source_path: Path
+    page_number: int
+    page_end: int | None = None
+    parser_kind: ParserKind
+    chunk_kind: EvidenceKind
+    section_title: str | None = None
+    section_type: str | None = None
+    table_id: str | None = None
+    row_label: str | None = None
+    metric_tags: list[str] = Field(default_factory=list)
+    period_hint: str | None = None
+
+
+class EvidenceUnit(BaseModel):
+    evidence_id: str
+    text: str
+    metadata: EvidenceMetadata
 
 
 class Citation(BaseModel):

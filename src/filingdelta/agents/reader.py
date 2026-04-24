@@ -4,6 +4,7 @@ from llama_index.llms.openai import OpenAI
 
 from filingdelta.core.config import Settings, get_settings
 from filingdelta.ingestion.page_locators import CandidatePageLocator
+from filingdelta.ingestion.section_taxonomy import SECTION_KEYWORDS_BY_TITLE, SECTION_TITLES
 from filingdelta.prompts.reader import READER_SUMMARY_PROMPT
 from filingdelta.schemas.filing import FilingChunk, ParsedFiling
 from filingdelta.schemas.workflow import (
@@ -13,121 +14,8 @@ from filingdelta.schemas.workflow import (
 )
 
 
-_SECTION_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "财务表现摘要": (
-        "financial highlights",
-        "financial summary",
-        "主要财务数据",
-        "财务摘要",
-        "营业收入",
-        "收入",
-        "净利润",
-        "毛利",
-        "每股盈利",
-        "profit attributable",
-        "operating profit",
-    ),
-    "股息 / 分红": (
-        "dividend",
-        "股息",
-        "分红",
-        "派息",
-        "现金股息",
-        "末期股息",
-        "每股现金分红",
-    ),
-    "经营数据 / 关键指标": (
-        "总资产",
-        "客户存款",
-        "贷款和垫款",
-        "经营活动产生的现金流量净额",
-        "月活跃账户数",
-        "订阅会员数",
-        "不良贷款率",
-        "拨备覆盖率",
-        "active accounts",
-        "arpu",
-        "revenue growth",
-    ),
-    "战略与展望": (
-        "strategy",
-        "strategic",
-        "outlook",
-        "plan",
-        "目标",
-        "战略",
-        "将继续",
-        "计划",
-        "展望",
-        "愿景",
-        "best value",
-    ),
-    "股东情况": (
-        "shareholder",
-        "股东",
-        "普通股股东总数",
-        "a股股东总数",
-        "h股股东总数",
-    ),
-    "风险与资产质量": (
-        "不良贷款",
-        "贷款损失准备",
-        "拨备覆盖率",
-        "风险",
-        "资产质量",
-        "npl",
-        "impairment",
-        "allowance",
-    ),
-    "业务回顾": (
-        "business review",
-        "业务回顾",
-        "广告",
-        "游戏",
-        "视频号",
-        "云业务",
-        "金融科技",
-        "wechat",
-        "qq",
-        "mini program",
-        "cloud",
-    ),
-    "用户与产品数据": (
-        "月活跃账户数",
-        "月活跃",
-        "subscription",
-        "会员数",
-        "wechat",
-        "qq",
-        "视频号",
-        "小游戏",
-        "mini games",
-        "video accounts",
-        "users",
-    ),
-    "可持续发展": (
-        "esg",
-        "可持续",
-        "公益",
-        "碳中和",
-        "慈善",
-        "绿色电力",
-        "sustainability",
-        "climate",
-    ),
-    "公司治理": (
-        "corporate governance",
-        "governance",
-        "董事会",
-        "监事会",
-        "审计",
-        "委员会",
-        "董事",
-        "治理",
-    ),
-}
-
-_SECTION_TAXONOMY = tuple(_SECTION_KEYWORDS.keys())
+_SECTION_KEYWORDS: dict[str, tuple[str, ...]] = SECTION_KEYWORDS_BY_TITLE
+_SECTION_TAXONOMY = SECTION_TITLES
 _SECTION_ORDER = {title: index for index, title in enumerate(_SECTION_TAXONOMY)}
 
 

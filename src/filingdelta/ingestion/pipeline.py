@@ -4,14 +4,16 @@ from pydantic import BaseModel, Field
 
 from filingdelta.core.config import Settings, get_settings
 from filingdelta.ingestion.chunking import build_chunks
+from filingdelta.ingestion.evidence_builder import build_evidence_units
 from filingdelta.ingestion.parsers import get_filing_parser
-from filingdelta.schemas.filing import FilingChunk, FilingSource, ParsedFiling
+from filingdelta.schemas.filing import EvidenceUnit, FilingChunk, FilingSource, ParsedFiling
 from filingdelta.storage.paths import ensure_data_dirs
 
 
 class IngestionResult(BaseModel):
     parsed_filing: ParsedFiling
     chunks: list[FilingChunk] = Field(default_factory=list)
+    evidence_units: list[EvidenceUnit] = Field(default_factory=list)
 
 
 class FilingIngestionPipeline:
@@ -23,4 +25,9 @@ class FilingIngestionPipeline:
         ensure_data_dirs()
         parsed_filing = self._parser.parse(source)
         chunks = build_chunks(parsed_filing)
-        return IngestionResult(parsed_filing=parsed_filing, chunks=chunks)
+        evidence_units = build_evidence_units(parsed_filing=parsed_filing, chunks=chunks)
+        return IngestionResult(
+            parsed_filing=parsed_filing,
+            chunks=chunks,
+            evidence_units=evidence_units,
+        )

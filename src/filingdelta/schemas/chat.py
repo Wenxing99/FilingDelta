@@ -13,6 +13,9 @@ class RetrievedChunk(BaseModel):
     source_path: Path
     text: str
     score: float | None = None
+    chunk_kind: str | None = None
+    section_title: str | None = None
+    section_type: str | None = None
     retrieval_source: Literal["semantic", "keyword_fallback"] = "semantic"
 
 

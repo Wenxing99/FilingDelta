@@ -29,7 +29,7 @@ from filingdelta.schemas.chat import (
     ExternalEvidenceResult,
     RetrievedChunk,
 )
-from filingdelta.schemas.filing import FilingChunk, FilingSource, ParsedFiling
+from filingdelta.schemas.filing import EvidenceKind, EvidenceUnit, FilingChunk, FilingSource, ParsedFiling
 from filingdelta.services.chat_memory import ChatMemoryStore
 from filingdelta.services.external_search import ExternalSearchError, ExternalSearchService
 from filingdelta.services.chat_telemetry import ChatTelemetryRecorder
@@ -66,6 +66,74 @@ _KEYWORD_FALLBACK_TERMS = (
     "wechat",
     "qq",
 )
+_SECTION_TEXT_PREFER_TERMS = (
+    "如何",
+    "为什么",
+    "為何",
+    "哪些",
+    "原因",
+    "归因",
+    "歸因",
+    "展望",
+    "措施",
+    "应对",
+    "應對",
+    "描述",
+    "提到",
+    "披露",
+    "管控",
+    "政策",
+    "战略",
+    "戰略",
+    "转型",
+    "轉型",
+    "风险",
+    "風險",
+    "业务回顾",
+    "業務回顧",
+    "内容生态",
+    "內容生態",
+    "用户时长",
+    "用戶時長",
+    "视频号",
+    "視頻號",
+    "ai",
+    "人工智能",
+    "數智化",
+    "数智化",
+)
+_PAGE_TEXT_PREFER_TERMS = (
+    "多少",
+    "几",
+    "幾",
+    "同比",
+    "环比",
+    "增幅",
+    "增长率",
+    "增長率",
+    "下降",
+    "金额",
+    "金額",
+    "单位",
+    "單位",
+    "每股",
+    "资本开支",
+    "資本開支",
+    "营收",
+    "营业收入",
+    "營業收入",
+    "净利润",
+    "淨利潤",
+    "roe",
+    "roae",
+    "roaa",
+    "拨备覆盖率",
+    "撥備覆蓋率",
+    "不良贷款率",
+    "不良貸款率",
+    "资本充足率",
+    "資本充足率",
+)
 
 
 @dataclass(slots=True)
@@ -73,6 +141,7 @@ class IndexedDocumentBundle:
     source: FilingSource
     parsed_filing: ParsedFiling
     chunks: list[FilingChunk]
+    evidence_units: list[EvidenceUnit]
 
 
 class ChatQAService:
@@ -177,18 +246,25 @@ class ChatQAService:
         document_retrieval_mode: str | None = None
         if plan.document_query:
             with telemetry.track("document_retrieval_ms"):
-                semantic_chunks = await asyncio.to_thread(
-                    self._retriever.retrieve,
+                retrieval_strategy = _select_document_retrieval_strategy(plan.document_query)
+                semantic_chunks, document_retrieval_mode = await asyncio.to_thread(
+                    _retrieve_document_evidence,
+                    retriever=self._retriever,
                     document_id=document_id,
                     question=plan.document_query,
                     callback_manager=telemetry.callback_manager,
+                    strategy=retrieval_strategy,
                 )
-            retrieved_chunks, document_retrieval_mode = _merge_keyword_fallback(
-                question=plan.document_query,
-                document_id=document_id,
-                semantic_chunks=semantic_chunks,
-                all_chunks=bundle.chunks,
-            )
+            if retrieval_strategy.primary_chunk_kind == EvidenceKind.PAGE_TEXT.value:
+                retrieved_chunks, document_retrieval_mode = _merge_keyword_fallback(
+                    question=plan.document_query,
+                    document_id=document_id,
+                    semantic_chunks=semantic_chunks,
+                    all_chunks=bundle.chunks,
+                    retrieval_mode=document_retrieval_mode,
+                )
+            else:
+                retrieved_chunks = semantic_chunks
         telemetry.set_retrieval(
             document_top_k=6 if plan.document_query else 0,
             document_retrieved_chunks=len(retrieved_chunks),
@@ -306,12 +382,14 @@ class ChatQAService:
                 self._indexer.index_document,
                 document_id=document_id,
                 chunks=ingestion_result.chunks,
+                evidence_units=ingestion_result.evidence_units,
                 callback_manager=callback_manager,
             )
             bundle = IndexedDocumentBundle(
                 source=source,
                 parsed_filing=ingestion_result.parsed_filing,
                 chunks=ingestion_result.chunks,
+                evidence_units=ingestion_result.evidence_units,
             )
             self._bundles[document_id] = bundle
             return bundle
@@ -428,19 +506,74 @@ def _resolve_effective_question(
     return candidate
 
 
+@dataclass(frozen=True)
+class _DocumentRetrievalStrategy:
+    primary_chunk_kind: str
+    fallback_chunk_kind: str | None = None
+    retrieval_mode: str = "semantic_with_filters"
+
+
+def _select_document_retrieval_strategy(question: str) -> _DocumentRetrievalStrategy:
+    normalized_question = _normalize_for_match(question)
+    if any(_normalize_for_match(term) in normalized_question for term in _PAGE_TEXT_PREFER_TERMS):
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            retrieval_mode="semantic_with_filters",
+        )
+    if any(_normalize_for_match(term) in normalized_question for term in _SECTION_TEXT_PREFER_TERMS):
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
+            fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            retrieval_mode="semantic_with_filters",
+        )
+    return _DocumentRetrievalStrategy(
+        primary_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+        retrieval_mode="semantic_with_filters",
+    )
+
+
+def _retrieve_document_evidence(
+    *,
+    retriever: DocumentChunkRetriever,
+    document_id: str,
+    question: str,
+    callback_manager: CallbackManager | None,
+    strategy: _DocumentRetrievalStrategy,
+) -> tuple[list[RetrievedChunk], str]:
+    primary_chunks = retriever.retrieve(
+        document_id=document_id,
+        question=question,
+        chunk_kind=strategy.primary_chunk_kind,
+        callback_manager=callback_manager,
+    )
+    if primary_chunks or strategy.fallback_chunk_kind is None:
+        return primary_chunks, strategy.retrieval_mode
+
+    fallback_chunks = retriever.retrieve(
+        document_id=document_id,
+        question=question,
+        chunk_kind=strategy.fallback_chunk_kind,
+        callback_manager=callback_manager,
+    )
+    if fallback_chunks:
+        return fallback_chunks, strategy.retrieval_mode
+    return primary_chunks, strategy.retrieval_mode
+
+
 def _merge_keyword_fallback(
     *,
     question: str,
     document_id: str,
     semantic_chunks: list[RetrievedChunk],
     all_chunks: list[FilingChunk],
+    retrieval_mode: str,
 ) -> tuple[list[RetrievedChunk], str]:
     keyword_terms = _extract_keyword_terms(question)
 
     if not keyword_terms:
-        return semantic_chunks, "semantic_with_filters"
+        return semantic_chunks, retrieval_mode
     if semantic_chunks:
-        return semantic_chunks, "semantic_with_filters"
+        return semantic_chunks, retrieval_mode
 
     keyword_matches: list[RetrievedChunk] = []
     for chunk in all_chunks:
@@ -469,7 +602,7 @@ def _merge_keyword_fallback(
     )
 
     if not keyword_matches:
-        return semantic_chunks, "semantic_with_filters"
+        return semantic_chunks, retrieval_mode
 
     return keyword_matches[:2], "semantic_with_keyword_fallback"
 

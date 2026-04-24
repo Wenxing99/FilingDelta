@@ -4,6 +4,7 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from uuid import uuid4
 
@@ -1054,10 +1055,23 @@ def _sanitize_user_facing_text(text: str) -> str:
     cleaned = re.sub(r"\bsource\s*=\s*[\w-]+\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bscore\s*=\s*[-+]?\d*\.?\d+\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(
-        r"(?<=[\u4e00-\u9fff])\s*\d{1,2}\s*(?=(?:日均余额|余额|占比|平均余额|平均成本率|利息支出))",
+        r"(?<=[\u4e00-\u9fff])\s*16\s*(?=(?:日均余额|余额|占比|平均余额|平均成本率|利息支出))",
         "",
         cleaned,
     )
+    cleaned = re.sub(
+        r"([（(])\s*16\s*(?=(?:日均|日均余额|余额|占比|平均余额|平均成本率|利息支出))",
+        r"\1",
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"(?<=[*_])\s*16\s*(?=(?:日均|日均余额|余额|占比|平均余额|平均成本率|利息支出))",
+        "",
+        cleaned,
+    )
+    cleaned = _remove_typed_metadata_parentheticals(cleaned)
+    cleaned = _normalize_raw_period_hints(cleaned)
+    cleaned = _add_hundred_million_unit_display(cleaned)
     cleaned = re.sub(r"[（(]\s*[、,，;；:：|/\-\s]*\s*[）)]", "", cleaned)
     cleaned = re.sub(r"([。；：:])\s+([-*]\s+)", r"\1\n\2", cleaned)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
@@ -1066,3 +1080,94 @@ def _sanitize_user_facing_text(text: str) -> str:
     cleaned = re.sub(r"[（(]\s*[、,，;；:：|/\-\s]*\s*[）)]", "", cleaned)
     cleaned = re.sub(r"[ \t]+([，。；：！？、,.!?;:])", r"\1", cleaned)
     return cleaned.strip(" \n\t|")
+
+
+def _remove_typed_metadata_parentheticals(text: str) -> str:
+    metadata_tokens = r"(?:fy20\d{2}|period|期间|財務摘要表|财务摘要表|table row|metric tags)"
+    page_metadata = rf"[（(]\s*(?:第\s*)?\d+\s*页[^）)\n]*(?:{metadata_tokens})[^）)\n]*[）)]"
+    english_metadata = rf"[（(][^）)\n]*(?:page\s*\d+)[^）)\n]*(?:{metadata_tokens})[^）)\n]*[）)]"
+    cleaned = re.sub(page_metadata, "", text, flags=re.IGNORECASE)
+    return re.sub(english_metadata, "", cleaned, flags=re.IGNORECASE)
+
+
+def _normalize_raw_period_hints(text: str) -> str:
+    cleaned = re.sub(r"\bfy\s*(20\d{2})\b", r"\1年", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bq3_(20\d{2})_ytd\b", r"\1年前三季度累计", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bh1_(20\d{2})\b", r"\1年上半年", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
+def _add_hundred_million_unit_display(text: str) -> str:
+    amount_pattern = r"(?P<amount>-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|-?\d+(?:\.\d+)?)"
+    unit_pattern = (
+        r"(?P<unit>"
+        r"人民币百万元|人民幣百萬元|港币百万元|港幣百萬元|港元百万元|港元百萬元|美元百万元|美元百萬元|"
+        r"RMB\s*million|HKD\s*million|USD\s*million|million\s*RMB|million\s*HKD|million\s*USD"
+        r")"
+    )
+    parenthetical = re.compile(
+        rf"{amount_pattern}\s*[（(]\s*(?:单位|單位)?\s*[:：]?\s*{unit_pattern}\s*[）)]",
+        flags=re.IGNORECASE,
+    )
+    adjacent = re.compile(rf"{amount_pattern}\s*{unit_pattern}", flags=re.IGNORECASE)
+
+    converted = parenthetical.sub(_format_hundred_million_match, text)
+    return adjacent.sub(_format_hundred_million_match, converted)
+
+
+def _format_hundred_million_match(match: re.Match[str]) -> str:
+    original = match.group(0)
+    tail = match.string[match.end() : match.end() + 16]
+    if "即" in tail:
+        return original
+
+    amount_text = match.group("amount")
+    unit_text = " ".join(match.group("unit").split())
+    converted = _million_to_hundred_million(amount_text)
+    if converted is None:
+        return original
+
+    target_unit = _hundred_million_unit(unit_text)
+    if target_unit is None:
+        return original
+    normalized_unit = _display_million_unit(unit_text)
+    return f"{amount_text} {normalized_unit}，即 {converted} {target_unit}"
+
+
+def _million_to_hundred_million(amount_text: str) -> str | None:
+    try:
+        value = Decimal(amount_text.replace(",", ""))
+    except Exception:
+        return None
+    converted = (value / Decimal("100")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{converted:,.2f}".rstrip("0").rstrip(".")
+
+
+def _display_million_unit(unit_text: str) -> str:
+    normalized = unit_text.strip().lower().replace(" ", "")
+    if normalized in {"rmbmillion", "millionrmb"}:
+        return "RMB million"
+    if normalized in {"hkdmillion", "millionhkd"}:
+        return "HKD million"
+    if normalized in {"usdmillion", "millionusd"}:
+        return "USD million"
+    if "港" in unit_text:
+        return "港币百万元"
+    if "美元" in unit_text:
+        return "美元百万元"
+    return "百万元"
+
+
+def _hundred_million_unit(unit_text: str) -> str | None:
+    normalized = unit_text.strip().lower().replace(" ", "")
+    if "港" in unit_text or normalized in {"hkdmillion", "millionhkd"}:
+        return "亿港元"
+    if "美元" in unit_text or normalized in {"usdmillion", "millionusd"}:
+        return "亿美元"
+    if (
+        "人民币" in unit_text
+        or "人民幣" in unit_text
+        or normalized in {"rmbmillion", "millionrmb"}
+    ):
+        return "亿元"
+    return None

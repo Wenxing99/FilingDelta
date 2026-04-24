@@ -67,6 +67,15 @@ FilingDelta 第一版最重要的能力是：
 - `React + TypeScript + Vite` 三栏阅读界面
 - PDF 连续阅读、缩放、跳页与 citation 联动
 - `通过 / 需复核 / 失败` 的 review status 展示
+- 右栏 `Ask Filing`：
+  - document-scoped RAG
+  - Mixed QA
+  - chat memory
+  - step-level telemetry
+- typed evidence retrieval 的第一轮演进：
+  - `section_text` 用于叙述型 / 风险 / 战略类问题
+  - `table_row` 用于指标 / 表格类问题
+  - `page_text` 继续作为 citation anchor 和 fallback
 
 当前 demo 以**单文档可追溯阅读**为主；双文档 `Compare / diff` 能力仍在下一阶段推进。
 
@@ -153,7 +162,7 @@ npm run dev
 
 - 左栏：文档概览、关键数字、重点摘要、review status
 - 中栏：原始文档 viewer 与 citation detail
-- 右栏：后续 chatbot 的预留区域
+- 右栏：`Ask Filing` 单文档问答与 Mixed QA
 
 当前中栏重点支持：
 

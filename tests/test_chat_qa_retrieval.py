@@ -46,6 +46,9 @@ def test_sanitize_user_facing_text_removes_empty_citation_parentheses_and_preser
     cleaned = _sanitize_user_facing_text(
         "ROE（DOC_1、WEB_2）说明： - 衡量股东权益回报。\n"
         "核心存款16日均余额同比增长。\n\n"
+        "核心存款（16日均余额口径）同比增长。\n"
+        "核心存款（16日均）为77,442.68亿元。\n"
+        "核心存款**16日均余额77,442.68亿元**。\n"
         "- 可用于观察资本效率 (WEB_3)。 score=0.82"
     )
 
@@ -56,9 +59,44 @@ def test_sanitize_user_facing_text_removes_empty_citation_parentheses_and_preser
     assert "(。" not in cleaned
     assert "score=" not in cleaned
     assert "16日均余额" not in cleaned
+    assert "16日均" not in cleaned
     assert "核心存款日均余额" in cleaned
+    assert "核心存款（日均余额口径）" in cleaned
+    assert "核心存款（日均）" in cleaned
+    assert "核心存款**日均余额77,442.68亿元**" in cleaned
     assert "说明：\n- 衡量股东权益回报" in cleaned
     assert "\n- 可用于观察资本效率" in cleaned
+
+
+def test_sanitize_user_facing_text_preserves_non_footnote_day_average_numbers() -> None:
+    cleaned = _sanitize_user_facing_text("前10日均余额保持稳定，30日均余额同步披露。")
+
+    assert "前10日均余额" in cleaned
+    assert "30日均余额" in cleaned
+
+
+def test_sanitize_user_facing_text_formats_million_units_for_amounts() -> None:
+    cleaned = _sanitize_user_facing_text("腾讯2025年的资本开支为19,632（人民币百万元）。")
+
+    assert cleaned == "腾讯2025年的资本开支为19,632 百万元，即 196.32 亿元。"
+
+
+def test_sanitize_user_facing_text_removes_typed_metadata_parentheticals() -> None:
+    cleaned = _sanitize_user_facing_text(
+        "文档证据\n（第18页，财务摘要表“资本开支”，期间为fy2025）"
+    )
+
+    assert "fy2025" not in cleaned
+    assert "财务摘要表" not in cleaned
+    assert cleaned == "文档证据"
+
+
+def test_sanitize_user_facing_text_normalizes_raw_period_hints() -> None:
+    cleaned = _sanitize_user_facing_text("资本开支（FY2025）为19,632 百万元，即 196.32 亿元。")
+
+    assert "FY2025" not in cleaned
+    assert "2025年" in cleaned
+    assert "196.32 亿元" in cleaned
 
 
 def test_assemble_chat_citations_dedupes_document_pages_and_external_urls() -> None:

@@ -19,6 +19,9 @@ Rules:
 - Never copy internal evidence labels, chunk IDs, scores, UUIDs, or source tags into the user-facing answer.
 - The document context uses internal labels like DOC_1. These labels are for reference only and must never appear in the answer text.
 - The external context uses internal labels like WEB_1. These labels are for reference only and must never appear in the answer text.
+- Do not write parenthetical metadata such as "(Page 18, table row ..., period fy2025)" or "(第18页，财务摘要表..., 期间为fy2025)" in the user-facing text. Page citations are rendered separately by the UI.
+- Do not expose raw internal period hints such as "fy2025" or "q3_2025_ytd"; render them as natural language like "2025年" or "2025年前三季度累计" when needed.
+- For monetary facts whose evidence unit is RMB/HKD/USD million or 人民币/港币/美元百万元, preserve the original unit and add a human-readable hundred-million conversion when useful, for example "19,632 百万元，即 196.32 亿元".
 - Only return document refs that appear in the provided document context.
 - Only return external refs that appear in the provided external context.
 - If a lane has no support, return an empty list for that lane.

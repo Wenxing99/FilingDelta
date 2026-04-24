@@ -1055,7 +1055,73 @@ button {
 
 .chat-message__content {
   margin: 0;
-  white-space: pre-wrap;
+}
+
+.chat-message__status {
+  margin: 0;
+  color: var(--muted);
+}
+
+.chat-markdown {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown p,
+.chat-markdown h3,
+.chat-markdown h4,
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0;
+}
+
+.chat-markdown h3,
+.chat-markdown h4 {
+  font-size: 0.9rem;
+  color: var(--ink);
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-markdown strong {
+  font-weight: 700;
+}
+
+.chat-markdown code {
+  border: 1px solid rgba(20, 33, 45, 0.08);
+  border-radius: 6px;
+  background: rgba(20, 33, 45, 0.05);
+  padding: 1px 4px;
+}
+
+.chat-markdown__table-wrap {
+  overflow-x: auto;
+}
+
+.chat-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid rgba(20, 33, 45, 0.1);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.chat-markdown th {
+  background: rgba(20, 33, 45, 0.04);
 }
 
 .chat-message__sections {

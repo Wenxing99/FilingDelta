@@ -1,4 +1,4 @@
-import type { ChatResponse, DemoDocument, DemoRun } from "./types";
+import type { ChatResponse, ChatStreamEvent, ChatStreamHandlers, DemoDocument, DemoRun } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() || "http://127.0.0.1:8000";
 
@@ -96,4 +96,99 @@ export async function askDemoChat(documentId: string, sessionId: string, questio
     }),
   });
   return payload.response;
+}
+
+export async function askDemoChatStream(
+  documentId: string,
+  sessionId: string,
+  question: string,
+  handlers: ChatStreamHandlers,
+): Promise<ChatResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/demo/chat/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      document_id: documentId,
+      session_id: sessionId,
+      question,
+    }),
+  });
+
+  if (!response.ok) {
+    throw await buildRequestError(response);
+  }
+  if (!response.body) {
+    return askDemoChat(documentId, sessionId, question);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResponse: ChatResponse | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex >= 0) {
+      const rawLine = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (rawLine) {
+        const event = parseChatStreamEvent(rawLine);
+        if (event.type === "error") {
+          throw new Error(event.message || "问答请求失败。");
+        }
+        if (event.type === "status") {
+          handlers.onStatus?.(event);
+        } else if (event.type === "delta") {
+          handlers.onDelta?.(event);
+        } else if (event.type === "citations") {
+          handlers.onCitations?.(event);
+        } else if (event.type === "telemetry") {
+          handlers.onTelemetry?.(event);
+        } else if (event.type === "done") {
+          finalResponse = event.response;
+          handlers.onDone?.(event);
+        }
+      }
+      newlineIndex = buffer.indexOf("\n");
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  const remaining = buffer.trim();
+  if (remaining) {
+    const event = parseChatStreamEvent(remaining);
+    if (event.type === "done") {
+      finalResponse = event.response;
+      handlers.onDone?.(event);
+    } else if (event.type === "error") {
+      throw new Error(event.message || "问答请求失败。");
+    }
+  }
+
+  if (!finalResponse) {
+    throw new Error("问答请求未返回完整结果。");
+  }
+  return finalResponse;
+}
+
+async function buildRequestError(response: Response): Promise<Error> {
+  const fallback = `${response.status} ${response.statusText}`;
+  try {
+    const payload = (await response.json()) as { detail?: string };
+    return new Error(payload.detail || fallback);
+  } catch {
+    return new Error(fallback);
+  }
+}
+
+function parseChatStreamEvent(line: string): ChatStreamEvent {
+  return JSON.parse(line) as ChatStreamEvent;
 }

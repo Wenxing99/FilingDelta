@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import mimetypes
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from filingdelta.schemas.demo import (
     DemoChatRequest,
@@ -140,6 +143,123 @@ async def demo_chat(payload: DemoChatRequest) -> DemoChatResponse:
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     return DemoChatResponse(response=response)
+
+
+@router.post("/chat/stream")
+async def demo_chat_stream(payload: DemoChatRequest) -> StreamingResponse:
+    try:
+        source = get_demo_document_source(payload.document_id)
+        service = get_chat_qa_service()
+    except KeyError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    return StreamingResponse(
+        _stream_demo_chat(payload=payload, source=source, service=service),
+        media_type="application/x-ndjson",
+    )
+
+
+async def _stream_demo_chat(
+    *,
+    payload: DemoChatRequest,
+    source,
+    service,
+) -> AsyncIterator[str]:
+    queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+    async def publish_status(stage: str, message: str) -> None:
+        await queue.put(
+            {
+                "type": "status",
+                "stage": stage,
+                "message": message,
+            }
+        )
+
+    task = asyncio.create_task(
+        service.ask(
+            document_id=payload.document_id,
+            source=source,
+            session_id=payload.session_id,
+            question=payload.question,
+            status_callback=publish_status,
+        )
+    )
+
+    try:
+        while not task.done():
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=0.1)
+            except TimeoutError:
+                continue
+            yield _encode_stream_event(event)
+
+        while not queue.empty():
+            yield _encode_stream_event(await queue.get())
+
+        try:
+            answer = task.result()
+        except ValueError as error:
+            yield _encode_stream_event(
+                {
+                    "type": "error",
+                    "message": str(error),
+                }
+            )
+            return
+        except Exception:
+            yield _encode_stream_event(
+                {
+                    "type": "error",
+                    "message": "问答请求失败。",
+                }
+            )
+            return
+
+        for chunk in _iter_text_deltas(answer.answer):
+            yield _encode_stream_event(
+                {
+                    "type": "delta",
+                    "text": chunk,
+                }
+            )
+            await asyncio.sleep(0.01)
+
+        yield _encode_stream_event(
+            {
+                "type": "citations",
+                "citations": [citation.model_dump(mode="json") for citation in answer.citations],
+            }
+        )
+        if answer.telemetry is not None:
+            yield _encode_stream_event(
+                {
+                    "type": "telemetry",
+                    "telemetry": answer.telemetry.model_dump(mode="json"),
+                }
+            )
+        yield _encode_stream_event(
+            {
+                "type": "done",
+                "response": answer.model_dump(mode="json"),
+            }
+        )
+    finally:
+        if not task.done():
+            task.cancel()
+
+
+def _encode_stream_event(event: dict[str, object]) -> str:
+    return f"{json.dumps(event, ensure_ascii=False, separators=(',', ':'))}\n"
+
+
+def _iter_text_deltas(text: str, *, chunk_size: int = 36) -> list[str]:
+    stripped = text.strip()
+    if not stripped:
+        return []
+    return [stripped[index : index + chunk_size] for index in range(0, len(stripped), chunk_size)]
 
 
 def _guess_media_type(path: Path) -> str:

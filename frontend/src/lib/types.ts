@@ -230,3 +230,38 @@ export type ChatResponse = {
     | "unsupported";
   telemetry: ChatTelemetry | null;
 };
+
+export type ChatStreamEvent =
+  | {
+      type: "status";
+      stage: string;
+      message: string;
+    }
+  | {
+      type: "delta";
+      text: string;
+    }
+  | {
+      type: "citations";
+      citations: ChatCitation[];
+    }
+  | {
+      type: "telemetry";
+      telemetry: ChatTelemetry;
+    }
+  | {
+      type: "done";
+      response: ChatResponse;
+    }
+  | {
+      type: "error";
+      message: string;
+    };
+
+export type ChatStreamHandlers = {
+  onStatus?: (event: Extract<ChatStreamEvent, { type: "status" }>) => void;
+  onDelta?: (event: Extract<ChatStreamEvent, { type: "delta" }>) => void;
+  onCitations?: (event: Extract<ChatStreamEvent, { type: "citations" }>) => void;
+  onTelemetry?: (event: Extract<ChatStreamEvent, { type: "telemetry" }>) => void;
+  onDone?: (event: Extract<ChatStreamEvent, { type: "done" }>) => void;
+};

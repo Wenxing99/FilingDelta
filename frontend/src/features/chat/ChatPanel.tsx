@@ -1,7 +1,8 @@
 import { FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { askDemoChat } from "../../lib/api";
+import { askDemoChatStream } from "../../lib/api";
 import type { ChatCitation, ChatResponse, CitationTarget, DemoDocument } from "../../lib/types";
+import { MarkdownInline, MarkdownText } from "./MarkdownText";
 
 type ChatPanelProps = {
   document: DemoDocument | null;
@@ -17,6 +18,7 @@ type ChatThreadMessage = {
   route: ChatResponse["route"] | null;
   retrievalMode: ChatResponse["retrieval_mode"] | null;
   telemetry: ChatResponse["telemetry"];
+  streamStatus?: string;
   isPending?: boolean;
   isError?: boolean;
 };
@@ -93,18 +95,21 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
       telemetry: null,
     };
     const pendingMessageId = `${Date.now()}-assistant`;
+    const documentId = document.document_id;
+    const sessionId = activeSession.sessionId;
 
-    appendMessages(document.document_id, [
+    appendMessages(documentId, [
       userMessage,
       {
         id: pendingMessageId,
         role: "assistant",
-        content: "正在结合当前文档与对话上下文生成回答...",
+        content: "",
         sections: [],
         citations: [],
         route: null,
         retrievalMode: null,
         telemetry: null,
+        streamStatus: "正在结合当前文档与对话上下文生成回答...",
         isPending: true,
       },
     ]);
@@ -112,36 +117,62 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     setIsSubmitting(true);
 
     try {
-      const response = await askDemoChat(document.document_id, activeSession.sessionId, question);
-      setSessions((current) => {
-        const currentSession = current[document.document_id];
-        if (!currentSession) {
-          return current;
-        }
-        return {
-          ...current,
-          [document.document_id]: {
-            sessionId: response.session_id,
-            messages: currentSession.messages.map((message) =>
-              message.id === pendingMessageId
-                ? {
-                    id: pendingMessageId,
-                    role: "assistant",
-                    content: response.answer,
-                    sections: response.sections,
-                    citations: response.citations,
-                    route: response.route,
-                    retrievalMode: response.retrieval_mode,
-                    telemetry: response.telemetry,
-                  }
-                : message,
-            ),
-          },
-        };
+      await askDemoChatStream(documentId, sessionId, question, {
+        onStatus: (event) => {
+          updateMessage(documentId, pendingMessageId, (message) => ({
+            ...message,
+            streamStatus: event.message,
+          }));
+        },
+        onDelta: (event) => {
+          updateMessage(documentId, pendingMessageId, (message) => ({
+            ...message,
+            content: `${message.content}${event.text}`,
+            streamStatus: undefined,
+          }));
+        },
+        onCitations: (event) => {
+          updateMessage(documentId, pendingMessageId, (message) => ({
+            ...message,
+            citations: event.citations,
+          }));
+        },
+        onTelemetry: (event) => {
+          updateMessage(documentId, pendingMessageId, (message) => ({
+            ...message,
+            telemetry: event.telemetry,
+          }));
+        },
+        onDone: (event) => {
+          const response = event.response;
+          replacePendingMessage(documentId, pendingMessageId, {
+            id: pendingMessageId,
+            role: "assistant",
+            content: response.answer,
+            sections: response.sections,
+            citations: response.citations,
+            route: response.route,
+            retrievalMode: response.retrieval_mode,
+            telemetry: response.telemetry,
+          });
+          setSessions((current) => {
+            const currentSession = current[documentId];
+            if (!currentSession) {
+              return current;
+            }
+            return {
+              ...current,
+              [documentId]: {
+                ...currentSession,
+                sessionId: response.session_id,
+              },
+            };
+          });
+        },
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "问答请求失败。";
-      replacePendingMessage(document.document_id, pendingMessageId, {
+      replacePendingMessage(documentId, pendingMessageId, {
         id: pendingMessageId,
         role: "assistant",
         content: message,
@@ -175,6 +206,26 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
         [documentId]: {
           ...currentSession,
           messages: [...currentSession.messages, ...newMessages],
+        },
+      };
+    });
+  }
+
+  function updateMessage(
+    documentId: string,
+    messageId: string,
+    updater: (message: ChatThreadMessage) => ChatThreadMessage,
+  ) {
+    setSessions((current) => {
+      const currentSession = current[documentId];
+      if (!currentSession) {
+        return current;
+      }
+      return {
+        ...current,
+        [documentId]: {
+          ...currentSession,
+          messages: currentSession.messages.map((message) => (message.id === messageId ? updater(message) : message)),
         },
       };
     });
@@ -270,7 +321,12 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
                     <span className="chat-message__mode">{renderRetrievalMode(message.retrievalMode)}</span>
                   ) : null}
                 </div>
-                <p className="chat-message__content">{message.content}</p>
+                {message.streamStatus ? <p className="chat-message__status">{message.streamStatus}</p> : null}
+                {message.content ? (
+                  <div className="chat-message__content">
+                    <MarkdownText text={message.content} />
+                  </div>
+                ) : null}
 
                 {message.sections.length > 0 ? (
                   <div className="chat-message__sections">
@@ -279,7 +335,9 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
                         <h4>{section.title}</h4>
                         <ul>
                           {section.items.map((item, index) => (
-                            <li key={`${message.id}:${section.section_type}:${index}`}>{item}</li>
+                            <li key={`${message.id}:${section.section_type}:${index}`}>
+                              <MarkdownInline text={item} />
+                            </li>
                           ))}
                         </ul>
                       </section>
@@ -396,7 +454,7 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
           className="primary-button chat-shell__submit"
           disabled={!document || isSubmitting || !draft.trim()}
         >
-          {isSubmitting ? "检索中..." : "发送"}
+          {isSubmitting ? "生成中..." : "发送"}
         </button>
       </form>
     </section>

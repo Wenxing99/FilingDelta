@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -34,6 +35,8 @@ from filingdelta.services.chat_memory import ChatMemoryStore
 from filingdelta.services.external_search import ExternalSearchError, ExternalSearchService
 from filingdelta.services.chat_telemetry import ChatTelemetryRecorder
 
+
+ChatStatusCallback = Callable[[str, str], Awaitable[None]]
 
 _KEYWORD_FALLBACK_TERMS = (
     "股息",
@@ -170,6 +173,7 @@ class ChatQAService:
         source: FilingSource,
         question: str,
         session_id: str | None = None,
+        status_callback: ChatStatusCallback | None = None,
     ) -> ChatAnswer:
         question_text = question.strip()
         if not question_text:
@@ -180,6 +184,11 @@ class ChatQAService:
 
         telemetry = ChatTelemetryRecorder()
         bundle_exists = document_id in self._bundles
+        await _emit_chat_status(
+            status_callback,
+            "index",
+            "正在准备当前文档的检索索引...",
+        )
         if bundle_exists:
             bundle = await self._ensure_document_bundle(
                 document_id=document_id,
@@ -199,6 +208,11 @@ class ChatQAService:
         )
         if _has_conversation_context(session_state):
             try:
+                await _emit_chat_status(
+                    status_callback,
+                    "contextualizer",
+                    "正在结合最近对话理解你的问题...",
+                )
                 with telemetry.track("contextualizer_ms"):
                     contextualization = await self._contextualizer.contextualize(
                         question=question_text,
@@ -221,11 +235,22 @@ class ChatQAService:
             original_question=question_text,
             contextualization=contextualization,
         )
+        await _emit_chat_status(
+            status_callback,
+            "router",
+            "正在判断需要文档证据还是外部背景...",
+        )
         with telemetry.track("router_ms"):
             route_decision = await self._router.route(
                 question=effective_question,
                 document=bundle.parsed_filing.document,
                 callback_manager=telemetry.callback_manager,
+            )
+        if route_decision.route == "mixed":
+            await _emit_chat_status(
+                status_callback,
+                "planner",
+                "正在规划文档证据与外部背景的组合方式...",
             )
         plan = await self._build_plan(
             question=effective_question,
@@ -252,6 +277,11 @@ class ChatQAService:
         retrieved_chunks: list[RetrievedChunk] = []
         document_retrieval_mode: str | None = None
         if plan.document_query:
+            await _emit_chat_status(
+                status_callback,
+                "document_retrieval",
+                "正在检索当前文档中的相关证据...",
+            )
             with telemetry.track("document_retrieval_ms"):
                 retrieval_strategy = _select_document_retrieval_strategy(plan.document_query)
                 semantic_chunks, document_retrieval_mode = await asyncio.to_thread(
@@ -281,6 +311,11 @@ class ChatQAService:
         external_error: str | None = None
         if plan.external_query and plan.external_search_kind != "none":
             try:
+                await _emit_chat_status(
+                    status_callback,
+                    "external_search",
+                    "正在检索外部概念或背景来源...",
+                )
                 with telemetry.track("external_search_ms"):
                     external_result = await self._external_search.search(
                         question=plan.external_query,
@@ -309,6 +344,11 @@ class ChatQAService:
             answer.telemetry = telemetry.build(route_type=route_decision.route, succeeded=True)
             return answer
 
+        await _emit_chat_status(
+            status_callback,
+            "answerer",
+            "正在组织回答与引用边界...",
+        )
         with telemetry.track("answerer_ms"):
             answer_draft = await self._answerer.answer(
                 question=question_text,
@@ -529,6 +569,19 @@ def get_chat_qa_service() -> ChatQAService:
     if _chat_qa_service is None:
         _chat_qa_service = ChatQAService()
     return _chat_qa_service
+
+
+async def _emit_chat_status(
+    callback: ChatStatusCallback | None,
+    stage: str,
+    message: str,
+) -> None:
+    if callback is None:
+        return
+    try:
+        await callback(stage, message)
+    except Exception:
+        return
 
 
 def _normalize_plan(

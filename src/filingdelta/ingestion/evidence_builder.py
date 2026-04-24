@@ -4,6 +4,7 @@ from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
 from filingdelta.ingestion.section_evidence import build_section_evidence
+from filingdelta.ingestion.table_row_evidence import build_table_row_evidence
 from filingdelta.schemas.filing import EvidenceKind, EvidenceMetadata, EvidenceUnit, FilingChunk, ParsedFiling
 
 
@@ -14,7 +15,8 @@ def build_evidence_units(
 ) -> list[EvidenceUnit]:
     page_text_units = [_chunk_to_page_text_evidence(chunk) for chunk in chunks]
     section_units = build_section_evidence(parsed_filing)
-    return page_text_units + section_units
+    table_row_units = build_table_row_evidence(parsed_filing)
+    return page_text_units + section_units + table_row_units
 
 
 def _chunk_to_page_text_evidence(chunk: FilingChunk) -> EvidenceUnit:

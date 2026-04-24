@@ -123,6 +123,10 @@ def _node_to_retrieved_chunk(
         chunk_kind=_coerce_str(metadata.get(CHUNK_KIND_FILTER_KEY)),
         section_title=_coerce_str(metadata.get("section_title")),
         section_type=_coerce_str(metadata.get("section_type")),
+        table_id=_coerce_str(metadata.get("table_id")),
+        row_label=_coerce_str(metadata.get("row_label")),
+        metric_tags=_coerce_str_list(metadata.get("metric_tags")),
+        period_hint=_coerce_str(metadata.get("period_hint")),
         retrieval_source="semantic",
     )
 
@@ -141,6 +145,15 @@ def _coerce_str(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _coerce_str_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [text for item in value if (text := _coerce_str(item))]
+    text = _coerce_str(value)
+    return [text] if text else []
 
 
 def _build_metadata_filters(*, document_id: str, chunk_kind: str | None) -> MetadataFilters:

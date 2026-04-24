@@ -70,12 +70,31 @@ def _build_retrieved_context(retrieved_chunks: list[RetrievedChunk]) -> tuple[st
         ref = f"DOC_{index}"
         page_label = chunk.page_number if chunk.page_number is not None else "unknown"
         ref_map[ref] = chunk.chunk_id
+        metadata_lines = _build_context_metadata_lines(chunk)
         parts.append(
             f"[Document evidence {ref}]\n"
             f"Page: {page_label}\n"
+            f"{metadata_lines}"
             f"Excerpt: {_truncate_text(chunk.text)}"
         )
     return "\n\n".join(parts), ref_map
+
+
+def _build_context_metadata_lines(chunk: RetrievedChunk) -> str:
+    lines: list[str] = []
+    if chunk.chunk_kind:
+        lines.append(f"Evidence kind: {chunk.chunk_kind}")
+    if chunk.section_title:
+        lines.append(f"Section: {chunk.section_title}")
+    if chunk.section_type:
+        lines.append(f"Section type: {chunk.section_type}")
+    if chunk.row_label:
+        lines.append(f"Table row: {chunk.row_label}")
+    if chunk.metric_tags:
+        lines.append(f"Metric tags: {', '.join(chunk.metric_tags)}")
+    if chunk.period_hint:
+        lines.append(f"Period hint: {chunk.period_hint}")
+    return "".join(f"{line}\n" for line in lines)
 
 
 def _filter_refs(refs: list[str], ref_map: dict[str, str]) -> list[str]:

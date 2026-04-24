@@ -16,6 +16,10 @@ class RetrievedChunk(BaseModel):
     chunk_kind: str | None = None
     section_title: str | None = None
     section_type: str | None = None
+    table_id: str | None = None
+    row_label: str | None = None
+    metric_tags: list[str] = Field(default_factory=list)
+    period_hint: str | None = None
     retrieval_source: Literal["semantic", "keyword_fallback"] = "semantic"
 
 

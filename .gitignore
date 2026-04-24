@@ -14,6 +14,10 @@ __pycache__/
 /AGENTS.md
 /INTERVIEW.md
 /MVP_PLAN.md
+/docs/dayu_agent_technical_report.md
+/docs/retrieval_eval_plan.md
+/docs/section_text_eval_plan.md
+/docs/typed_evidence_refactor_blueprint.md
 /IMG_1627.png
 /IMG_1628.png
 *.egg-info/

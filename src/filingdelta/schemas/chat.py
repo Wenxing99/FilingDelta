@@ -27,6 +27,12 @@ class ChatRouteDecision(BaseModel):
     route: Literal["document_only", "concept_only", "mixed", "unsupported"]
     needs_external_background: bool = False
     needs_risk_reasoning: bool = False
+    document_evidence_intent: Literal[
+        "metric_value",
+        "metric_attribution",
+        "business_narrative",
+        "fallback",
+    ] = "fallback"
     rationale: str = ""
 
 

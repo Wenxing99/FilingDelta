@@ -121,6 +121,12 @@ Rules:
 - Requests for buy/sell/hold recommendations, target prices, portfolio advice, or investment advice are unsupported.
 - Set needs_external_background only when external context is needed beyond the filing.
 - Set needs_risk_reasoning only when the user asks about implications, usual effects, or what something means beyond the filing.
+- Also classify document_evidence_intent when document evidence is needed:
+  - metric_value: values, amounts, ratios, balances, percentages, or direct changes.
+  - metric_attribution: causes, drivers, reasons, contributions, or management explanation of a metric change.
+  - business_narrative: business, risk, strategy, product, policy, or management-action narrative.
+  - fallback: no document evidence or unclear document intent.
+- Metric words do not automatically mean metric_value. Cause/driver/reason questions are metric_attribution.
 """
 
 
@@ -131,7 +137,8 @@ def _build_direct_router_system_prompt(
         return (
             _DIRECT_ROUTER_SYSTEM_PROMPT
             + "\nReturn only a valid JSON object with exactly these keys: "
-            "route, needs_external_background, needs_risk_reasoning, rationale."
+            "route, needs_external_background, needs_risk_reasoning, "
+            "document_evidence_intent, rationale."
         )
     return _DIRECT_ROUTER_SYSTEM_PROMPT
 
@@ -165,6 +172,10 @@ _CHAT_ROUTE_DECISION_JSON_SCHEMA: dict[str, Any] = {
         "needs_risk_reasoning": {
             "type": "boolean",
         },
+        "document_evidence_intent": {
+            "type": "string",
+            "enum": ["metric_value", "metric_attribution", "business_narrative", "fallback"],
+        },
         "rationale": {
             "type": "string",
         },
@@ -173,6 +184,7 @@ _CHAT_ROUTE_DECISION_JSON_SCHEMA: dict[str, Any] = {
         "route",
         "needs_external_background",
         "needs_risk_reasoning",
+        "document_evidence_intent",
         "rationale",
     ],
 }

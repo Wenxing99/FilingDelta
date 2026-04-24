@@ -19,6 +19,7 @@ def test_parse_direct_router_response_validates_json_content() -> None:
                             '{"route":"document_only",'
                             '"needs_external_background":false,'
                             '"needs_risk_reasoning":false,'
+                            '"document_evidence_intent":"business_narrative",'
                             '"rationale":"Disclosure-only question."}'
                         )
                     }
@@ -30,6 +31,7 @@ def test_parse_direct_router_response_validates_json_content() -> None:
     assert decision.route == "document_only"
     assert decision.needs_external_background is False
     assert decision.needs_risk_reasoning is False
+    assert decision.document_evidence_intent == "business_narrative"
 
 
 def test_parse_direct_router_response_rejects_missing_content() -> None:
@@ -61,3 +63,4 @@ def test_json_object_prompt_requests_exact_json_keys() -> None:
 
     assert "Return only a valid JSON object" in prompt
     assert "needs_external_background" in prompt
+    assert "document_evidence_intent" in prompt

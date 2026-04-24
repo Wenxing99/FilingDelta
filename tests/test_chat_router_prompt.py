@@ -17,3 +17,15 @@ def test_chat_router_prompt_keeps_external_reasoning_boundary_for_mixed() -> Non
     assert "what the filing facts might mean beyond the filing" in prompt
     assert "什么是净资产收益率？结合当前文档里的披露解释它说明什么。 -> route=mixed" in prompt
     assert "资本开支增加通常意味着什么？结合腾讯这份文档回答。 -> route=mixed" in prompt
+
+
+def test_chat_router_prompt_classifies_document_evidence_intent() -> None:
+    prompt = CHAT_ROUTER_PROMPT.template
+
+    assert "document_evidence_intent" in prompt
+    assert "metric_value" in prompt
+    assert "metric_attribution" in prompt
+    assert "business_narrative" in prompt
+    assert "Metric words do not automatically mean metric_value" in prompt
+    assert "腾讯2025年营销服务收入增长的主要原因是什么？ -> route=document_only" in prompt
+    assert "document_evidence_intent=metric_attribution" in prompt

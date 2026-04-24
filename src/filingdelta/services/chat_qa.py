@@ -308,7 +308,10 @@ class ChatQAService:
                 "正在检索当前文档中的相关证据...",
             )
             with telemetry.track("document_retrieval_ms"):
-                retrieval_strategy = _select_document_retrieval_strategy(plan.document_query)
+                retrieval_strategy = _select_document_retrieval_strategy(
+                    plan.document_query,
+                    route_decision=route_decision,
+                )
                 semantic_chunks, document_retrieval_mode = await asyncio.to_thread(
                     _retrieve_document_evidence,
                     retriever=self._retriever,
@@ -658,13 +661,21 @@ def _resolve_effective_question(
 class _DocumentRetrievalStrategy:
     primary_chunk_kind: str
     fallback_chunk_kind: str | None = None
+    fallback_chunk_kinds: tuple[str, ...] = ()
     include_fallback_when_primary_found: bool = False
     primary_top_k: int = 6
     fallback_top_k: int = 6
     retrieval_mode: str = "semantic_with_filters"
 
 
-def _select_document_retrieval_strategy(question: str) -> _DocumentRetrievalStrategy:
+def _select_document_retrieval_strategy(
+    question: str,
+    route_decision: ChatRouteDecision | None = None,
+) -> _DocumentRetrievalStrategy:
+    intent_strategy = _select_document_retrieval_strategy_from_intent(route_decision)
+    if intent_strategy is not None:
+        return intent_strategy
+
     normalized_question = _normalize_for_match(question)
     if any(_normalize_for_match(term) in normalized_question for term in _TABLE_ROW_PREFER_TERMS):
         return _DocumentRetrievalStrategy(
@@ -692,6 +703,40 @@ def _select_document_retrieval_strategy(question: str) -> _DocumentRetrievalStra
     )
 
 
+def _select_document_retrieval_strategy_from_intent(
+    route_decision: ChatRouteDecision | None,
+) -> _DocumentRetrievalStrategy | None:
+    if route_decision is None:
+        return None
+
+    intent = route_decision.document_evidence_intent
+    if intent == "metric_value":
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.TABLE_ROW.value,
+            fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            include_fallback_when_primary_found=True,
+            primary_top_k=8,
+            fallback_top_k=4,
+            retrieval_mode="semantic_with_filters",
+        )
+    if intent == "metric_attribution":
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
+            fallback_chunk_kinds=(EvidenceKind.TABLE_ROW.value, EvidenceKind.PAGE_TEXT.value),
+            include_fallback_when_primary_found=True,
+            primary_top_k=4,
+            fallback_top_k=3,
+            retrieval_mode="semantic_with_filters",
+        )
+    if intent == "business_narrative":
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
+            fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            retrieval_mode="semantic_with_filters",
+        )
+    return None
+
+
 def _retrieve_document_evidence(
     *,
     retriever: DocumentChunkRetriever,
@@ -707,18 +752,26 @@ def _retrieve_document_evidence(
         chunk_kind=strategy.primary_chunk_kind,
         callback_manager=callback_manager,
     )
-    if strategy.fallback_chunk_kind is None:
+    fallback_chunk_kinds = strategy.fallback_chunk_kinds
+    if not fallback_chunk_kinds and strategy.fallback_chunk_kind is not None:
+        fallback_chunk_kinds = (strategy.fallback_chunk_kind,)
+
+    if not fallback_chunk_kinds:
         return primary_chunks, strategy.retrieval_mode
     if primary_chunks and not strategy.include_fallback_when_primary_found:
         return primary_chunks, strategy.retrieval_mode
 
-    fallback_chunks = retriever.retrieve(
-        document_id=document_id,
-        question=question,
-        top_k=strategy.fallback_top_k,
-        chunk_kind=strategy.fallback_chunk_kind,
-        callback_manager=callback_manager,
-    )
+    fallback_chunks: list[RetrievedChunk] = []
+    for fallback_chunk_kind in fallback_chunk_kinds:
+        fallback_chunks.extend(
+            retriever.retrieve(
+                document_id=document_id,
+                question=question,
+                top_k=strategy.fallback_top_k,
+                chunk_kind=fallback_chunk_kind,
+                callback_manager=callback_manager,
+            )
+        )
     if primary_chunks:
         merged_chunks = _dedupe_retrieved_chunks([*primary_chunks, *fallback_chunks])
         return _prioritize_retrieved_chunks(question=question, chunks=merged_chunks)[:6], strategy.retrieval_mode

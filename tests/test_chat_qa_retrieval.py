@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from filingdelta.schemas.chat import ChatCitation, RetrievedChunk
+from filingdelta.schemas.chat import ChatCitation, ChatRouteDecision, RetrievedChunk
 from filingdelta.schemas.filing import EvidenceKind
 from filingdelta.services.chat_qa import (
     _assemble_chat_citations,
@@ -40,6 +40,52 @@ def test_select_document_retrieval_strategy_prefers_table_row_for_customer_depos
     assert strategy.primary_chunk_kind == EvidenceKind.TABLE_ROW.value
     assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
     assert strategy.include_fallback_when_primary_found
+
+
+def test_select_document_retrieval_strategy_uses_metric_attribution_intent() -> None:
+    strategy = _select_document_retrieval_strategy(
+        "腾讯2025年营销服务收入增长的主要原因是什么？",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="metric_attribution",
+        ),
+    )
+
+    assert strategy.primary_chunk_kind == EvidenceKind.SECTION_TEXT.value
+    assert strategy.fallback_chunk_kinds == (
+        EvidenceKind.TABLE_ROW.value,
+        EvidenceKind.PAGE_TEXT.value,
+    )
+    assert strategy.include_fallback_when_primary_found
+    assert strategy.primary_top_k == 4
+
+
+def test_select_document_retrieval_strategy_uses_metric_value_intent() -> None:
+    strategy = _select_document_retrieval_strategy(
+        "腾讯2025年营销服务收入是多少？",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="metric_value",
+        ),
+    )
+
+    assert strategy.primary_chunk_kind == EvidenceKind.TABLE_ROW.value
+    assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.include_fallback_when_primary_found
+
+
+def test_select_document_retrieval_strategy_uses_business_narrative_intent() -> None:
+    strategy = _select_document_retrieval_strategy(
+        "招商银行如何管控房地产风险？",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="business_narrative",
+        ),
+    )
+
+    assert strategy.primary_chunk_kind == EvidenceKind.SECTION_TEXT.value
+    assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert not strategy.include_fallback_when_primary_found
 
 
 def test_sanitize_user_facing_text_removes_empty_citation_parentheses_and_preserves_lists() -> None:

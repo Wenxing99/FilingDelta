@@ -61,6 +61,22 @@ SMOKE_CASES: tuple[SmokeCase, ...] = (
         notes="Narrative AI / advertising question expected to use section_text.",
     ),
     SmokeCase(
+        case_id="tcehy-marketing-services-growth",
+        case_set="quick",
+        document_name=TCEHY_ANNUAL,
+        question="腾讯2025年营销服务收入增长的主要原因是什么？",
+        expected_route="document_only",
+        notes="Metric-attribution question expected to use section_text before table_row.",
+    ),
+    SmokeCase(
+        case_id="tcehy-revenue-segments",
+        case_set="quick",
+        document_name=TCEHY_ANNUAL,
+        question="腾讯2025年收入主要来自哪些业务分部？",
+        expected_route="document_only",
+        notes="Segment revenue question expected to stay document-only.",
+    ),
+    SmokeCase(
         case_id="tcehy-capex",
         case_set="quick",
         document_name=TCEHY_ANNUAL,

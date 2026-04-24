@@ -128,6 +128,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delete --qdrant-path before running. Ignored for the default temporary path.",
     )
     parser.add_argument(
+        "--prewarm",
+        action="store_true",
+        help="Prewarm selected document indexes before asking questions.",
+    )
+    parser.add_argument(
         "--list-cases",
         action="store_true",
         help="Print available smoke cases without calling models.",
@@ -203,6 +208,14 @@ async def _run_with_qdrant_path(
     sources = get_demo_document_sources()
     session_prefix = f"chat-smoke-{uuid4().hex[:8]}"
 
+    prewarm_results = []
+    if args.prewarm:
+        prewarm_results = await _prewarm_selected_documents(
+            service=service,
+            cases=selected_cases,
+            sources=sources,
+        )
+
     started = time.perf_counter()
     results = []
     for index, case in enumerate(selected_cases, start=1):
@@ -244,6 +257,8 @@ async def _run_with_qdrant_path(
             "qdrant_path": str(qdrant_path),
             "temporary_qdrant": temporary_qdrant,
             "output_path": str(output_path),
+            "prewarm_enabled": bool(args.prewarm),
+            "prewarm_results": prewarm_results,
         },
         "summary": summary,
         "cases": results,
@@ -259,6 +274,51 @@ async def _run_with_qdrant_path(
 
     if summary["failed_count"] or (args.fail_on_route_mismatch and summary["route_mismatch_count"]):
         raise SystemExit(1)
+
+
+async def _prewarm_selected_documents(
+    *,
+    service: ChatQAService,
+    cases: list[SmokeCase],
+    sources: dict[str, Any],
+) -> list[dict[str, Any]]:
+    documents = []
+    seen_document_ids: set[str] = set()
+    for case in cases:
+        document_id, source = _resolve_document(case.document_name, sources)
+        if document_id in seen_document_ids:
+            continue
+        seen_document_ids.add(document_id)
+        documents.append((document_id, source))
+
+    results = []
+    for document_id, source in documents:
+        print(f"prewarm {source.source_path.name}", flush=True)
+        started = time.perf_counter()
+        try:
+            await service.prewarm_document(document_id=document_id, source=source)
+            result = {
+                "document_id": document_id,
+                "source_path": str(source.source_path),
+                "succeeded": True,
+                "wall_ms": _elapsed_ms(started),
+                "error": None,
+            }
+        except Exception as error:  # noqa: BLE001 - smoke script should record failures and continue.
+            result = {
+                "document_id": document_id,
+                "source_path": str(source.source_path),
+                "succeeded": False,
+                "wall_ms": _elapsed_ms(started),
+                "error": f"{type(error).__name__}: {error}",
+            }
+        print(
+            f"  prewarm {'ok' if result['succeeded'] else 'failed'} "
+            f"wall={result['wall_ms']}ms",
+            flush=True,
+        )
+        results.append(result)
+    return results
 
 
 def _select_cases(

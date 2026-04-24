@@ -160,6 +160,8 @@ class ChatQAService:
         self._answerer = AnswererAgent(settings=self._settings)
         self._bundles: dict[str, IndexedDocumentBundle] = {}
         self._ensure_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[None]] = set()
+        self._memory_summary_versions: dict[tuple[str, str], int] = {}
 
     async def ask(
         self,
@@ -195,16 +197,22 @@ class ChatQAService:
             document_id=document_id,
             session_id=active_session_id,
         )
-        try:
-            with telemetry.track("contextualizer_ms"):
-                contextualization = await self._contextualizer.contextualize(
-                    question=question_text,
-                    document=bundle.parsed_filing.document,
-                    recent_messages=session_state.recent_messages,
-                    conversation_summary=session_state.conversation_summary,
-                    callback_manager=telemetry.callback_manager,
+        if _has_conversation_context(session_state):
+            try:
+                with telemetry.track("contextualizer_ms"):
+                    contextualization = await self._contextualizer.contextualize(
+                        question=question_text,
+                        document=bundle.parsed_filing.document,
+                        recent_messages=session_state.recent_messages,
+                        conversation_summary=session_state.conversation_summary,
+                        callback_manager=telemetry.callback_manager,
+                    )
+            except Exception:
+                contextualization = ChatContextualization(
+                    standalone_question=question_text,
+                    used_memory=False,
                 )
-        except Exception:
+        else:
             contextualization = ChatContextualization(
                 standalone_question=question_text,
                 used_memory=False,
@@ -237,7 +245,6 @@ class ChatQAService:
                 document=bundle.parsed_filing.document,
                 user_question=question_text,
                 assistant_answer=answer.answer,
-                telemetry=telemetry,
             )
             answer.telemetry = telemetry.build(route_type=route_decision.route, succeeded=True)
             return answer
@@ -298,7 +305,6 @@ class ChatQAService:
                 document=bundle.parsed_filing.document,
                 user_question=question_text,
                 assistant_answer=answer.answer,
-                telemetry=telemetry,
             )
             answer.telemetry = telemetry.build(route_type=route_decision.route, succeeded=True)
             return answer
@@ -356,10 +362,16 @@ class ChatQAService:
             document=bundle.parsed_filing.document,
             user_question=question_text,
             assistant_answer=answer.answer,
-            telemetry=telemetry,
         )
         answer.telemetry = telemetry.build(route_type=route_decision.route, succeeded=True)
         return answer
+
+    async def prewarm_document(self, *, document_id: str, source: FilingSource) -> None:
+        await self._ensure_document_bundle(
+            document_id=document_id,
+            source=source,
+            callback_manager=None,
+        )
 
     async def _ensure_document_bundle(
         self,
@@ -435,7 +447,6 @@ class ChatQAService:
         document,
         user_question: str,
         assistant_answer: str,
-        telemetry: ChatTelemetryRecorder,
     ) -> None:
         updated_session = await self._memory.append_turn(
             document_id=session_state.document_id,
@@ -443,23 +454,71 @@ class ChatQAService:
             user_message=user_question,
             assistant_message=assistant_answer,
         )
+        self._schedule_memory_summary(
+            session_state=updated_session,
+            document=document,
+            user_question=user_question,
+            assistant_answer=assistant_answer,
+        )
+
+    def _schedule_memory_summary(
+        self,
+        *,
+        session_state: ChatSessionState,
+        document,
+        user_question: str,
+        assistant_answer: str,
+    ) -> None:
+        key = (session_state.document_id, session_state.session_id)
+        version = self._memory_summary_versions.get(key, 0) + 1
+        self._memory_summary_versions[key] = version
+
+        task = asyncio.create_task(
+            self._summarize_memory_background(
+                session_state=session_state,
+                document=document,
+                user_question=user_question,
+                assistant_answer=assistant_answer,
+                version=version,
+            )
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _summarize_memory_background(
+        self,
+        *,
+        session_state: ChatSessionState,
+        document,
+        user_question: str,
+        assistant_answer: str,
+        version: int,
+    ) -> None:
+        key = (session_state.document_id, session_state.session_id)
         try:
-            with telemetry.track("memory_summarizer_ms"):
-                summary = await self._memory_summarizer.summarize(
-                    document=document,
-                    existing_summary=updated_session.conversation_summary,
-                    recent_messages=updated_session.recent_messages,
-                    user_question=user_question,
-                    assistant_answer=assistant_answer,
-                    callback_manager=telemetry.callback_manager,
-                )
+            summary = await self._memory_summarizer.summarize(
+                document=document,
+                existing_summary=session_state.conversation_summary,
+                recent_messages=session_state.recent_messages,
+                user_question=user_question,
+                assistant_answer=assistant_answer,
+                callback_manager=None,
+            )
+            if self._memory_summary_versions.get(key) != version:
+                return
             await self._memory.replace_summary(
-                document_id=session_state.document_id,
-                session_id=session_state.session_id,
+                document_id=key[0],
+                session_id=key[1],
                 summary=summary,
             )
         except Exception:
             return
+
+    async def _drain_background_tasks(self) -> None:
+        tasks = list(self._background_tasks)
+        if not tasks:
+            return
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 _chat_qa_service: ChatQAService | None = None
@@ -493,6 +552,17 @@ def _normalize_plan(
             else "concept"
         )
     return plan
+
+
+def _has_conversation_context(session_state: ChatSessionState) -> bool:
+    summary = session_state.conversation_summary
+    return bool(
+        session_state.recent_messages
+        or summary.summary_text.strip()
+        or summary.discussed_terms
+        or summary.confirmed_facts
+        or summary.open_questions
+    )
 
 
 def _resolve_effective_question(

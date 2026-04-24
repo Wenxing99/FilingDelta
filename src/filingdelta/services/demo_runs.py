@@ -12,6 +12,7 @@ from filingdelta.core.config import Settings, get_settings
 from filingdelta.schemas.demo import DemoRun, DemoRunArtifactsTelemetry, DemoRunStageTelemetry, DemoRunTelemetry
 from filingdelta.schemas.filing import FilingSource
 from filingdelta.schemas.workflow import SingleFilingWorkflowResult
+from filingdelta.services.chat_qa import get_chat_qa_service
 from filingdelta.services.review_feedback import ReviewFeedbackService
 from filingdelta.workflows.events import WorkflowProgressEvent
 from filingdelta.workflows.single_filing import SingleFilingWorkflow
@@ -98,6 +99,7 @@ class DemoRunManager:
         self._settings = settings or get_settings()
         self._runs: dict[str, DemoRun] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._prewarm_tasks: set[asyncio.Task[None]] = set()
         self._sources: dict[str, FilingSource] = {}
         self._telemetry_trackers: dict[str, _RunTelemetryTracker] = {}
         self._lock = asyncio.Lock()
@@ -121,7 +123,9 @@ class DemoRunManager:
             self._sources[run_id] = source
             self._telemetry_trackers[run_id] = _RunTelemetryTracker()
 
-        task = asyncio.create_task(self._execute_run(run_id=run_id, source=source))
+        task = asyncio.create_task(
+            self._execute_run(run_id=run_id, document_id=document_id, source=source)
+        )
         self._tasks[run_id] = task
         return run
 
@@ -282,7 +286,7 @@ class DemoRunManager:
                 }
             )
 
-    async def _execute_run(self, *, run_id: str, source: FilingSource) -> None:
+    async def _execute_run(self, *, run_id: str, document_id: str, source: FilingSource) -> None:
         workflow = SingleFilingWorkflow(settings=self._settings, verbose=False)
         handler = workflow.run(source=source)
         await self._set_stage(
@@ -310,6 +314,10 @@ class DemoRunManager:
                         progress_message="分析完成。",
                         result=result,
                     )
+                    self._schedule_chat_index_prewarm(
+                        document_id=document_id,
+                        source=source,
+                    )
         except Exception as error:
             await self._set_stage(
                 run_id,
@@ -320,6 +328,25 @@ class DemoRunManager:
             )
         finally:
             self._tasks.pop(run_id, None)
+
+    def _schedule_chat_index_prewarm(self, *, document_id: str, source: FilingSource) -> None:
+        task = asyncio.create_task(
+            self._prewarm_chat_index_background(document_id=document_id, source=source)
+        )
+        self._prewarm_tasks.add(task)
+        task.add_done_callback(self._prewarm_tasks.discard)
+
+    async def _prewarm_chat_index_background(self, *, document_id: str, source: FilingSource) -> None:
+        try:
+            await get_chat_qa_service().prewarm_document(document_id=document_id, source=source)
+        except Exception:
+            return
+
+    async def _drain_prewarm_tasks(self) -> None:
+        tasks = list(self._prewarm_tasks)
+        if not tasks:
+            return
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def _build_run_telemetry(
         self,

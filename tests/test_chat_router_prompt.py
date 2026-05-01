@@ -29,3 +29,20 @@ def test_chat_router_prompt_classifies_document_evidence_intent() -> None:
     assert "Metric words do not automatically mean metric_value" in prompt
     assert "腾讯2025年营销服务收入增长的主要原因是什么？ -> route=document_only" in prompt
     assert "document_evidence_intent=metric_attribution" in prompt
+
+
+def test_chat_router_prompt_keeps_inventory_channel_efficiency_as_attribution() -> None:
+    prompt = CHAT_ROUTER_PROMPT.template
+
+    assert "inventory, channel inventory, channel efficiency, or turnover" in prompt
+    assert "家电企业存货或渠道库存是否异常？公司如何描述渠道效率？" in prompt
+    assert (
+        "家电企业存货或渠道库存是否异常？公司如何描述渠道效率？ -> route=document_only, "
+        "needs_external_background=false, needs_risk_reasoning=false, "
+        "document_evidence_intent=metric_attribution"
+    ) in prompt
+    assert (
+        "腾讯如何描述 AI 广告能力？ -> route=document_only, "
+        "needs_external_background=false, needs_risk_reasoning=false, "
+        "document_evidence_intent=business_narrative"
+    ) in prompt

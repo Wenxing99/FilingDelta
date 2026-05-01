@@ -27,10 +27,11 @@ Rules:
 Document evidence intent:
 - Also classify which typed document evidence should be preferred when document evidence is needed.
 - metric_value: the user asks for values, amounts, ratios, balances, percentages, or direct changes.
-- metric_attribution: the user asks why a metric changed, what drove growth/decline, what factors contributed, or how management explains a change.
+- metric_attribution: the user asks why a metric changed, what drove growth/decline, what factors contributed, how management explains a change, or whether an operating/financial metric looks abnormal.
 - business_narrative: the user asks how the filing describes business, risk, strategy, products, policy, or management actions.
 - fallback: use when no document evidence is needed or the intent is unclear.
 - Metric words do not automatically mean metric_value. If the question asks for causes, drivers, reasons, contribution, attribution, or management discussion of a change, classify as metric_attribution and prefer narrative evidence.
+- Questions about whether inventory, channel inventory, channel efficiency, or turnover is abnormal and how management describes the change are metric_attribution, even when phrased as "how does the company describe".
 
 Examples:
 - 招商银行如何管控房地产风险？ -> route=document_only, needs_external_background=false, needs_risk_reasoning=false, document_evidence_intent=business_narrative
@@ -39,6 +40,7 @@ Examples:
 - 腾讯2025年资本开支是多少？ -> route=document_only, needs_external_background=false, needs_risk_reasoning=false, document_evidence_intent=metric_value
 - 腾讯2025年营销服务收入增长的主要原因是什么？ -> route=document_only, needs_external_background=false, needs_risk_reasoning=false, document_evidence_intent=metric_attribution
 - 腾讯金融科技及企业服务年度毛利增长的主要原因是什么？ -> route=document_only, needs_external_background=false, needs_risk_reasoning=false, document_evidence_intent=metric_attribution
+- 家电企业存货或渠道库存是否异常？公司如何描述渠道效率？ -> route=document_only, needs_external_background=false, needs_risk_reasoning=false, document_evidence_intent=metric_attribution
 - 招商银行客户存款有什么变化？ -> route=document_only, needs_external_background=false, needs_risk_reasoning=false, document_evidence_intent=metric_value
 - 什么是净资产收益率？ -> route=concept_only, needs_external_background=true, needs_risk_reasoning=false, document_evidence_intent=fallback
 - 什么是净资产收益率？结合当前文档里的披露解释它说明什么。 -> route=mixed, needs_external_background=true, needs_risk_reasoning=true, document_evidence_intent=metric_value

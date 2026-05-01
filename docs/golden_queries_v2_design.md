@@ -323,21 +323,22 @@ Before turning this design into JSON and runner code, require:
 
 ## Current Implementation Status
 
-截至 2026-05-01，`golden_queries_v2` 已经进入首轮可运行 smoke/eval 诊断阶段：
+截至 2026-05-01，`golden_queries_v2` 的 eval-building 阶段已经阶段性收口：
 
-- 已生成首个 anchor-confirmed runnable manifest：`data/outputs/eval/golden_queries_v2_smoke.json`，当前包含 `14` 条人工确认或修正页码的 case。
-- `expected_pages` 只允许来自 `human_confirmed_pages` / `human_corrected_pages`；candidate pages、Codex probe pages、BM25/hybrid 命中页都不能自动升格为 gold。
-- live retrieval pilot 只跑当前 14 条 manifest case，不跑完整 answer synthesis；结果为 `6 passed / 8 failed`。
-- BM25 / hybrid retrieval diagnosis 只是 page-hit-only 对照实验，用来判断 retrieval 排序问题；它不是正式系统接入，也不代表 full live pilot rescue。
-- failure probe 已把剩余失败归因为四类：router intent mismatch、table extraction gap、rank/rerank issue、generic metric row dominance。
+- anchor-confirmed smoke set 已从 `14` 条行业专项 case 扩到 `20` 条：`14` 条行业专项 + `6` 条 universal/general case。
+- Universal 6 的人工确认页码输入已放入 tracked 文件：`docs/eval_inputs/golden_queries_v2_universal6_review_notes.json`。
+- `data/outputs/eval/golden_queries_v2_smoke.json` 是生成物，不作为 source of truth 提交；需要时由 review notes、industry matrix、Universal 6 matrix 和 manifest builder 重建。
+- `expected_pages` 只允许来自 `human_confirmed_pages` / `human_corrected_pages`；candidate pages、Codex probe pages、Codex suggested pages、BM25/hybrid 命中页都不能自动升格为 gold。
+- BYD raw 已替换为完整年报，`NEV-01` 已迁到新 document key：`比亚迪_2025_annual_report-7906b664`，人工确认页码仍为 `25`。
+- 14 条行业专项页码已由用户再次复核通过；6 条 Universal 页码也已确认并进入 20-case manifest 草案。
+- 14 条 live retrieval pilot 的历史结果为 `6 passed / 8 failed`。BM25 / hybrid retrieval diagnosis 仍只是 page-hit-only 对照实验，不是正式系统接入。
+- failure probe 已把已知失败归因为四类：router intent mismatch、table extraction gap、rank/rerank issue、generic metric row dominance。
 
 ## Next Implementation Step
 
-下一步不要扩大 manifest，也不要改 gold。按最小工程切片推进：
+下一步不要继续扩 manifest，也不要继续改 gold。eval-building 已经足够支撑主线验证，后续按最小工程切片回到主线能力：
 
-1. 先修 `HA-03` 的 router intent 判别问题，并重跑当前 14 条 live retrieval pilot。
-2. 再选 `HYDRO-01` 加一个消费/制造代表 case，修 table_row 抽取、行业指标别名或表格识别缺口。
-3. 单独处理 `BABA-01` 的 metric/segment-aware table-row rerank，降低通用财报行和附注页优先级。
-4. 最后处理 `HA-02` 这类 gold page low-rank 问题，把 BM25 可解释的页级信号转成轻量 rerank/boost 验证。
-
-在上述切片通过之前，不要把 BM25/hybrid 接入正式 `ChatQAService`，也不要进入 full answer-quality benchmark。
+1. 如需验证当前 eval set，先单独批准并运行 20 条 live retrieval pilot；不要在 manifest 生成步骤里自动跑 live retrieval。
+2. 先收口 `HA-03` router intent 判别问题，再观察 20 条 pilot 中 intent/page-hit 的变化。
+3. 再选择 table extraction / retrieval 排序的最小失败簇修复，例如 `HYDRO-01`、`BABA-01` 或 BYD/Universal 中暴露的表格证据问题。
+4. 在上述切片通过之前，不要把 BM25/hybrid 接入正式 `ChatQAService`，也不要进入 full answer-quality benchmark。

@@ -734,6 +734,87 @@ def test_anchor_confirmed_manifest_builder_includes_only_human_confirmed_cases(t
     assert manifest.queries[0].mvp_status == "anchor_confirmed_draft"
 
 
+def test_anchor_confirmed_manifest_builder_merges_multiple_matrices(tmp_path) -> None:
+    builder = _load_manifest_builder_module()
+    source_path = tmp_path / "filing.pdf"
+    source_path.write_text("dummy", encoding="utf-8")
+    industry_matrix_path = tmp_path / "industry_matrix.json"
+    universal_matrix_path = tmp_path / "universal_matrix.json"
+    industry_matrix_path.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    _industry_matrix_row(
+                        company="比亚迪",
+                        query_id="NEV-01",
+                        document_key="比亚迪_2025_annual_report-7906b664",
+                        local_path=str(source_path),
+                        human_confirmed_pages=[25],
+                    )
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    universal_matrix_path.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    _industry_matrix_row(
+                        company="招商银行",
+                        query_id="U-01",
+                        document_key="cmb_doc",
+                        local_path=str(source_path),
+                        human_confirmed_pages=[8],
+                    )
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    report = builder.build_manifest_report(
+        matrix_paths=[industry_matrix_path, universal_matrix_path]
+    )
+
+    assert report["summary"]["included_cases"] == 2
+    assert report["source_files"]["matrices"] == [
+        builder._display_path(industry_matrix_path),
+        builder._display_path(universal_matrix_path),
+    ]
+    assert report["manifest"]["metadata"]["source_matrix"] is None
+    assert report["manifest"]["metadata"]["source_matrices"] == [
+        builder._display_path(industry_matrix_path),
+        builder._display_path(universal_matrix_path),
+    ]
+    assert [case["query_id"] for case in report["included_cases"]] == ["NEV-01", "U-01"]
+    byd = next(case for case in report["manifest"]["queries"] if case["company"] == "比亚迪")
+    assert byd["document_key"] == "比亚迪_2025_annual_report-7906b664"
+    assert byd["expected_pages"] == [25]
+
+
+def test_anchor_confirmed_manifest_builder_rejects_duplicate_case_id(tmp_path) -> None:
+    builder = _load_manifest_builder_module()
+    source_path = tmp_path / "filing.pdf"
+    source_path.write_text("dummy", encoding="utf-8")
+    first_matrix_path = tmp_path / "first.json"
+    second_matrix_path = tmp_path / "second.json"
+    row = _industry_matrix_row(
+        company="招商银行",
+        query_id="U-01",
+        document_key="cmb_doc",
+        local_path=str(source_path),
+        human_confirmed_pages=[8],
+    )
+    first_matrix_path.write_text(json.dumps({"rows": [row]}, ensure_ascii=False), encoding="utf-8")
+    second_matrix_path.write_text(json.dumps({"rows": [row]}, ensure_ascii=False), encoding="utf-8")
+
+    with pytest.raises(builder.SmokeManifestBuildError, match="Duplicate case_id"):
+        builder.build_manifest_report(matrix_paths=[first_matrix_path, second_matrix_path])
+
+
 def test_anchor_confirmed_manifest_expected_pages_do_not_use_candidates(tmp_path) -> None:
     builder = _load_manifest_builder_module()
     source_path = tmp_path / "filing.pdf"
@@ -749,6 +830,7 @@ def test_anchor_confirmed_manifest_expected_pages_do_not_use_candidates(tmp_path
         human_corrected_pages=[32, 31],
     )
     row["codex_anchor_pages"] = [25, 4, 31, 39, 24]
+    row["codex_suggested_gold_pages"] = [25, 4, 99]
     matrix_path.write_text(json.dumps({"rows": [row]}, ensure_ascii=False), encoding="utf-8")
 
     report = builder.build_manifest_report(matrix_path=matrix_path)
@@ -756,6 +838,7 @@ def test_anchor_confirmed_manifest_expected_pages_do_not_use_candidates(tmp_path
 
     assert query["expected_pages"] == [31, 32]
     assert 25 not in query["expected_pages"]
+    assert 99 not in query["expected_pages"]
     assert report["included_cases"][0]["expected_pages_source"] == (
         "human_confirmed_pages+human_corrected_pages"
     )

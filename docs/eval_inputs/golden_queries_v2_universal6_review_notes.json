@@ -1,0 +1,130 @@
+{
+  "schema_version": "golden_queries_v2_universal6_review_notes.v1",
+  "page_number_policy": "runtime_pymupdf_1_based_page_number",
+  "policy": {
+    "expected_pages_source": "human_confirmed_pages + human_corrected_pages only",
+    "codex_suggested_gold_pages_are_not_expected_pages": true
+  },
+  "cases": [
+    {
+      "company": "招商银行",
+      "query_id": "U-01",
+      "status": "human_confirmed_pages",
+      "human_confirmed_pages": [
+        8
+      ],
+      "human_corrected_pages": [],
+      "human_rejected_candidate_pages": [],
+      "codex_suggested_gold_pages": [
+        8,
+        42,
+        19,
+        14,
+        10
+      ],
+      "human_review_notes": "最终确认页码：8。"
+    },
+    {
+      "company": "腾讯控股",
+      "query_id": "U-02",
+      "status": "human_confirmed_pages",
+      "human_confirmed_pages": [
+        9
+      ],
+      "human_corrected_pages": [],
+      "human_rejected_candidate_pages": [],
+      "codex_suggested_gold_pages": [
+        10,
+        223,
+        9,
+        14,
+        27
+      ],
+      "human_review_notes": "最终确认页码：9。"
+    },
+    {
+      "company": "贵州茅台",
+      "query_id": "U-03",
+      "status": "human_confirmed_pages",
+      "human_confirmed_pages": [
+        66,
+        6
+      ],
+      "human_corrected_pages": [],
+      "human_rejected_candidate_pages": [],
+      "codex_suggested_gold_pages": [
+        66,
+        115,
+        65,
+        120,
+        7
+      ],
+      "human_review_notes": "最终确认页码：66、6。"
+    },
+    {
+      "company": "阿里巴巴",
+      "query_id": "U-04",
+      "status": "human_confirmed_pages",
+      "human_confirmed_pages": [
+        57,
+        76,
+        77
+      ],
+      "human_corrected_pages": [],
+      "human_rejected_candidate_pages": [],
+      "codex_suggested_gold_pages": [
+        57,
+        76,
+        77,
+        309,
+        72
+      ],
+      "human_review_notes": "最终确认页码：57、76、77。"
+    },
+    {
+      "company": "比亚迪",
+      "query_id": "U-06",
+      "status": "human_confirmed_pages_with_rejection",
+      "human_confirmed_pages": [
+        26,
+        127,
+        15,
+        325
+      ],
+      "human_corrected_pages": [],
+      "human_rejected_candidate_pages": [
+        188
+      ],
+      "codex_suggested_gold_pages": [
+        188,
+        26,
+        127,
+        15,
+        325
+      ],
+      "human_review_notes": "最终确认页码：26、127、15、325；候选页 188 rejected。"
+    },
+    {
+      "company": "中国平安",
+      "query_id": "U-08",
+      "status": "human_confirmed_pages",
+      "human_confirmed_pages": [
+        95,
+        330,
+        350,
+        355,
+        356
+      ],
+      "human_corrected_pages": [],
+      "human_rejected_candidate_pages": [],
+      "codex_suggested_gold_pages": [
+        95,
+        356,
+        330,
+        350,
+        355
+      ],
+      "human_review_notes": "最终确认页码：95、330、350、355、356。"
+    }
+  ]
+}

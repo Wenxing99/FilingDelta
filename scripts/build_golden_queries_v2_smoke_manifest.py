@@ -15,16 +15,27 @@ DEFAULT_MD_OUTPUT = Path("docs/golden_queries_v2_smoke_manifest_summary.md")
 MANIFEST_VERSION = "golden_queries_v2_smoke_anchor_confirmed_v0"
 
 
+class SmokeManifestBuildError(ValueError):
+    """Raised when smoke manifest inputs cannot be merged safely."""
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Build an anchor-confirmed golden_queries_v2 smoke manifest draft."
     )
-    parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    parser.add_argument(
+        "--matrix",
+        type=Path,
+        action="append",
+        default=None,
+        help="Matrix JSON input. Repeat to merge multiple matrices.",
+    )
     parser.add_argument("--json-output", type=Path, default=DEFAULT_JSON_OUTPUT)
     parser.add_argument("--md-output", type=Path, default=DEFAULT_MD_OUTPUT)
     args = parser.parse_args(argv)
 
-    report = build_manifest_report(matrix_path=_resolve(args.matrix))
+    matrix_paths = [_resolve(path) for path in (args.matrix or [DEFAULT_MATRIX])]
+    report = build_manifest_report(matrix_paths=matrix_paths)
     json_output = _resolve(args.json_output)
     md_output = _resolve(args.md_output)
     json_output.parent.mkdir(parents=True, exist_ok=True)
@@ -46,24 +57,37 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def build_manifest_report(*, matrix_path: Path) -> dict[str, Any]:
-    matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
-    rows = list(matrix.get("rows", []))
+def build_manifest_report(
+    *,
+    matrix_path: Path | None = None,
+    matrix_paths: list[Path] | None = None,
+) -> dict[str, Any]:
+    if matrix_paths is None:
+        if matrix_path is None:
+            matrix_paths = [DEFAULT_MATRIX]
+        else:
+            matrix_paths = [matrix_path]
+    if not matrix_paths:
+        raise SmokeManifestBuildError("At least one matrix path is required.")
+    rows = _load_rows_from_matrices(matrix_paths)
     included_rows = [row for row in rows if _include_row(row)]
     excluded_rows = [row for row in rows if not _include_row(row)]
 
     documents = _manifest_documents(included_rows)
     queries = [_manifest_query(row) for row in included_rows]
+    source_matrices = [_display_path(path) for path in matrix_paths]
     manifest = {
         "version": MANIFEST_VERSION,
         "suite": "golden_queries_v2",
         "default_top_k": 6,
         "metadata": {
             "generated_at": date.today().isoformat(),
-            "source_matrix": _display_path(matrix_path),
+            "source_matrix": source_matrices[0] if len(source_matrices) == 1 else None,
+            "source_matrices": source_matrices,
             "anchor_policy": (
                 "expected_pages only come from human_confirmed_pages plus "
-                "human_corrected_pages; candidate_pages and codex_anchor_pages are not promoted."
+                "human_corrected_pages; candidate_pages, codex_anchor_pages, and "
+                "codex_suggested_gold_pages are not promoted."
             ),
             "page_order_policy": "preserve human feedback order, de-duplicated",
             "not_full_golden_queries_v2": True,
@@ -74,7 +98,7 @@ def build_manifest_report(*, matrix_path: Path) -> dict[str, Any]:
     return {
         "schema_version": "golden_queries_v2_smoke_manifest_build.v1",
         "generated_at": date.today().isoformat(),
-        "source_files": {"industry_matrix": _display_path(matrix_path)},
+        "source_files": {"matrices": source_matrices},
         "summary": {
             "total_rows": len(rows),
             "included_cases": len(queries),
@@ -97,6 +121,28 @@ def build_manifest_report(*, matrix_path: Path) -> dict[str, Any]:
     }
 
 
+def _load_rows_from_matrices(matrix_paths: list[Path]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_case_ids: dict[str, str] = {}
+    for matrix_path in matrix_paths:
+        matrix = json.loads(matrix_path.read_text(encoding="utf-8"))
+        matrix_name = _display_path(matrix_path)
+        for index, row in enumerate(matrix.get("rows", []), start=1):
+            if not isinstance(row, dict):
+                continue
+            case_id = str(row.get("case_id") or "")
+            if not case_id:
+                raise SmokeManifestBuildError(f"{matrix_name} row #{index}: missing case_id")
+            if case_id in seen_case_ids:
+                raise SmokeManifestBuildError(
+                    f"Duplicate case_id {case_id!r} in {matrix_name}; "
+                    f"already seen in {seen_case_ids[case_id]}"
+                )
+            seen_case_ids[case_id] = matrix_name
+            rows.append(row)
+    return rows
+
+
 def _include_row(row: dict[str, Any]) -> bool:
     if row.get("manifest_readiness") == "blocked_missing_raw":
         return False
@@ -112,6 +158,20 @@ def _manifest_documents(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in rows:
         document_key = str(row["document_key"])
         if document_key in documents_by_key:
+            continue
+        document_metadata = row.get("document_metadata")
+        if isinstance(document_metadata, dict):
+            documents_by_key[document_key] = {
+                "document_key": document_key,
+                "source_path": document_metadata.get("source_path") or row["local_path"],
+                "company_name": document_metadata.get("company_name") or row["company"],
+                "ticker": document_metadata.get("ticker"),
+                "market": document_metadata.get("market") or _infer_market(row),
+                "doc_type": document_metadata.get("doc_type") or _infer_doc_type(row),
+                "fiscal_period": document_metadata.get("fiscal_period") or "2025 annual report",
+                "language": document_metadata.get("language") or _infer_language(row),
+                "industry": row.get("industry"),
+            }
             continue
         documents_by_key[document_key] = {
             "document_key": document_key,
@@ -166,7 +226,8 @@ def _manifest_notes(row: dict[str, Any]) -> str:
     return (
         "expected_pages_source=human_confirmed_pages+human_corrected_pages; "
         f"anchor_review_status={row.get('anchor_review_status', 'not_reviewed')}; "
-        f"human_review_notes={row.get('human_review_notes', '')}"
+        f"human_review_notes={row.get('human_review_notes', '')}; "
+        f"codex_suggested_gold_pages_ignored={row.get('codex_suggested_gold_pages', [])}"
     )
 
 
@@ -232,7 +293,7 @@ def render_summary_markdown(report: dict[str, Any]) -> str:
         "## 口径",
         "",
         "- `expected_pages` 只来自 `human_confirmed_pages + human_corrected_pages`。",
-        "- `candidate_pages` 和 `codex_anchor_pages` 不能自动升格为 `expected_pages`。",
+        "- `candidate_pages`、`codex_anchor_pages` 和 `codex_suggested_gold_pages` 不能自动升格为 `expected_pages`。",
         "- 页码顺序保留用户反馈顺序，并去重。",
         "",
         "## 纳入 Case",

@@ -70,6 +70,27 @@ def test_scan_raw_document_registry_registers_normal_pdf(tmp_path) -> None:
     assert entry.warnings == []
 
 
+def test_scan_raw_document_registry_recognizes_new_industry_pdf_names(tmp_path) -> None:
+    raw_dir = tmp_path / "data" / "raw"
+    raw_dir.mkdir(parents=True)
+    content = b"%PDF-1.4\n" + b"x" * 2048
+    for filename in (
+        "中国石油2025年年度报告.pdf",
+        "分众传媒2025年年度报告.PDF",
+        "长江电力2025年年度报告.pdf",
+    ):
+        (raw_dir / filename).write_bytes(content + filename.encode("utf-8"))
+
+    registry = scan_raw_document_registry(raw_dir=raw_dir, repo_root=tmp_path)
+
+    by_company = {entry.inferred_company_name: entry for entry in registry.documents}
+    assert set(by_company) == {"中国石油", "分众传媒", "长江电力"}
+    assert {entry.inferred_fiscal_year for entry in registry.documents} == {2025}
+    assert {entry.inferred_doc_type for entry in registry.documents} == {"annual_report"}
+    assert {entry.suffix for entry in registry.documents} == {".pdf"}
+    assert all(entry.warnings == [] for entry in registry.documents)
+
+
 def test_scan_raw_document_registry_marks_duplicate_checksums(tmp_path) -> None:
     raw_dir = tmp_path / "data" / "raw"
     raw_dir.mkdir(parents=True)

@@ -321,17 +321,23 @@ Before turning this design into JSON and runner code, require:
 5. The runner records route, `document_evidence_intent`, retrieved evidence kinds, citation pages, latency, and answer hygiene checks.
 6. The first `smoke_v2` runner should not require perfect semantic answer grading; it should first establish retrieval and output hygiene.
 
+## Current Implementation Status
+
+截至 2026-05-01，`golden_queries_v2` 已经进入首轮可运行 smoke/eval 诊断阶段：
+
+- 已生成首个 anchor-confirmed runnable manifest：`data/outputs/eval/golden_queries_v2_smoke.json`，当前包含 `14` 条人工确认或修正页码的 case。
+- `expected_pages` 只允许来自 `human_confirmed_pages` / `human_corrected_pages`；candidate pages、Codex probe pages、BM25/hybrid 命中页都不能自动升格为 gold。
+- live retrieval pilot 只跑当前 14 条 manifest case，不跑完整 answer synthesis；结果为 `6 passed / 8 failed`。
+- BM25 / hybrid retrieval diagnosis 只是 page-hit-only 对照实验，用来判断 retrieval 排序问题；它不是正式系统接入，也不代表 full live pilot rescue。
+- failure probe 已把剩余失败归因为四类：router intent mismatch、table extraction gap、rank/rerank issue、generic metric row dominance。
+
 ## Next Implementation Step
 
-After the relevant reports are added, create:
+下一步不要扩大 manifest，也不要改 gold。按最小工程切片推进：
 
-- `data/outputs/eval/golden_queries_v2_design.json` or equivalent manifest.
-- a runner that can execute by case id, industry, company, or intent.
-- a summary report with:
-  - route / intent accuracy,
-  - evidence-kind hit rate,
-  - page-hit rate,
-  - answer hygiene failures,
-  - latency by case type.
+1. 先修 `HA-03` 的 router intent 判别问题，并重跑当前 14 条 live retrieval pilot。
+2. 再选 `HYDRO-01` 加一个消费/制造代表 case，修 table_row 抽取、行业指标别名或表格识别缺口。
+3. 单独处理 `BABA-01` 的 metric/segment-aware table-row rerank，降低通用财报行和附注页优先级。
+4. 最后处理 `HA-02` 这类 gold page low-rank 问题，把 BM25 可解释的页级信号转成轻量 rerank/boost 验证。
 
-Do not expand the system into reranking, semantic chunking, or fine-tuning before this baseline exists.
+在上述切片通过之前，不要把 BM25/hybrid 接入正式 `ChatQAService`，也不要进入 full answer-quality benchmark。

@@ -18,6 +18,7 @@ from filingdelta.schemas.filing import EvidenceKind
 
 SmokeV2Route = Literal["document_only", "concept_only", "mixed", "unsupported"]
 SmokeV2Intent = Literal["metric_value", "metric_attribution", "business_narrative", "fallback"]
+SmokeV2Mode = Literal["validate_only", "dry_run", "live_retrieval"]
 
 SMOKE_V2_TIER = "smoke_v2"
 DEFAULT_TOP_K = 6
@@ -107,6 +108,7 @@ class SmokeV2Observation:
     executed: bool = False
     route: str | None = None
     document_evidence_intent: str | None = None
+    retrieval_mode: str | None = None
     retrieved_evidence_kinds: tuple[str, ...] = ()
     citation_pages: tuple[int, ...] = ()
     retrieved_row_labels: tuple[str, ...] = ()
@@ -191,8 +193,9 @@ def build_smoke_v2_report(
     *,
     manifest: SmokeV2Manifest,
     cases: list[SmokeV2Case],
-    mode: Literal["validate_only", "dry_run"],
+    mode: SmokeV2Mode,
     top_k: int | None = None,
+    observations: dict[str, SmokeV2Observation] | None = None,
 ) -> dict[str, Any]:
     effective_top_k = _coerce_positive_int(
         manifest.default_top_k if top_k is None else top_k,
@@ -200,16 +203,23 @@ def build_smoke_v2_report(
     )
     used_document_keys = {case.document_key for case in cases}
     missing_documents = manifest.documents.missing_documents(used_document_keys)
-    query_results = [
-        build_smoke_v2_case_result(
-            case=case,
-            observation=SmokeV2Observation(),
+    if mode == "live_retrieval":
+        query_results = _build_live_retrieval_results(
+            cases=cases,
+            observations=observations or {},
             top_k=effective_top_k,
-            status="validated" if mode == "validate_only" else "dry_run_skipped",
-            skip_reason=None if mode == "validate_only" else _dry_run_skip_reason(case, manifest),
         )
-        for case in cases
-    ]
+    else:
+        query_results = [
+            build_smoke_v2_case_result(
+                case=case,
+                observation=SmokeV2Observation(),
+                top_k=effective_top_k,
+                status="validated" if mode == "validate_only" else "dry_run_skipped",
+                skip_reason=None if mode == "validate_only" else _dry_run_skip_reason(case, manifest),
+            )
+            for case in cases
+        ]
 
     return {
         "version": "smoke_v2_eval_v0",
@@ -235,6 +245,7 @@ def build_smoke_v2_case_result(
     top_k: int,
     status: str = "evaluated",
     skip_reason: str | None = None,
+    score_answer_quality: bool = True,
 ) -> dict[str, Any]:
     effective_top_k = _coerce_positive_int(top_k, context="top_k")
     executed = (
@@ -252,6 +263,7 @@ def build_smoke_v2_case_result(
         hygiene=hygiene,
         top_k=effective_top_k,
         executed=executed,
+        score_answer_quality=score_answer_quality,
     )
     return {
         "id": case.case_id,
@@ -277,6 +289,7 @@ def build_smoke_v2_case_result(
         "observed": {
             "route": observation.route,
             "document_evidence_intent": observation.document_evidence_intent,
+            "retrieval_mode": observation.retrieval_mode,
             "retrieved_evidence_kinds": list(observation.retrieved_evidence_kinds),
             "citation_pages": list(observation.citation_pages),
             "retrieved_row_labels": list(observation.retrieved_row_labels),
@@ -290,6 +303,7 @@ def build_smoke_v2_case_result(
         "scores": scores,
         "status": status,
         "skip_reason": skip_reason,
+        "failure_reasons": [],
         "notes": case.notes,
     }
 
@@ -355,6 +369,72 @@ def summarize_smoke_v2_results(query_results: list[dict[str, Any]], *, top_k: in
         summary[f"{score_key}_passed"] = len(passed)
         summary[f"{score_key}_rate"] = len(passed) / len(scored) if scored else None
     return summary
+
+
+def render_smoke_v2_markdown_summary(report: dict[str, Any]) -> str:
+    summary = report["summary"]
+    top_k = int(report["top_k"])
+    page_key = f"page_hit@{top_k}"
+    evidence_key = f"evidence_kind_hit@{top_k}"
+    lines = [
+        "# Golden Queries v2 Smoke Pilot Summary",
+        "",
+        "## 摘要",
+        "",
+        f"- 运行模式：`{report['mode']}`",
+        f"- Manifest：`{report.get('manifest_path') or '-'}`",
+        f"- Manifest version：`{report.get('manifest_version') or '-'}`",
+        f"- Top K：`{top_k}`",
+        f"- Case 总数：`{summary['total_queries']}`",
+        f"- 状态统计：`{json.dumps(summary['status_counts'], ensure_ascii=False)}`",
+        (
+            f"- 页码命中：`{summary[f'{page_key}_passed']}/"
+            f"{summary[f'{page_key}_scored']}`"
+        ),
+        (
+            f"- 证据类型命中：`{summary[f'{evidence_key}_passed']}/"
+            f"{summary[f'{evidence_key}_scored']}`"
+        ),
+        "",
+        "## Case 结果",
+        "",
+        "| Case | 公司 | 状态 | 期望页 | 命中页 | 证据类型 | 失败原因 |",
+        "|---|---|---:|---|---|---|---|",
+    ]
+    for result in report["queries"]:
+        expected_pages = ", ".join(str(page) for page in result["expected"]["pages"]) or "-"
+        observed_pages = ", ".join(
+            str(page) for page in result["observed"]["citation_pages"]
+        ) or "-"
+        evidence_kinds = ", ".join(result["observed"]["retrieved_evidence_kinds"]) or "-"
+        failure_reasons = "; ".join(result.get("failure_reasons") or []) or "-"
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    f"`{_escape_markdown_table(result['id'])}`",
+                    _escape_markdown_table(result.get("company") or "-"),
+                    f"`{_escape_markdown_table(result['status'])}`",
+                    _escape_markdown_table(expected_pages),
+                    _escape_markdown_table(observed_pages),
+                    _escape_markdown_table(evidence_kinds),
+                    _escape_markdown_table(failure_reasons),
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 口径说明",
+            "",
+            "- 本摘要只反映当前 manifest 中 14 条 anchor-confirmed case 的 live retrieval 结果。",
+            "- 本轮没有修改 manifest gold 页码，也没有把失败 case 改成通过。",
+            "- `required_fields_present`、`forbidden_failure_absent`、`output_hygiene_passed` 需要答案合成/字段判定，本轮 live retrieval-only pilot 不计入通过判定。",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 def build_builtin_placeholder_manifest_payload() -> dict[str, Any]:
@@ -518,6 +598,7 @@ def _score_case(
     hygiene: dict[str, dict[str, object]],
     top_k: int,
     executed: bool,
+    score_answer_quality: bool,
 ) -> dict[str, object]:
     return {
         "route_hit": _optional_equal(
@@ -564,7 +645,7 @@ def _score_case(
             observed=observation.answer_field_ids,
             expected=case.expected_answer_field_ids,
             required=bool(case.expected_answer_field_ids),
-            executed=executed,
+            executed=executed and score_answer_quality,
         ),
         "citation_anchor_valid": _citation_anchor_valid(
             observation.citation_pages,
@@ -573,10 +654,78 @@ def _score_case(
         "forbidden_failure_absent": _forbidden_failure_absent(
             answer_text=observation.answer_text,
             forbidden_failure_modes=case.forbidden_failure_modes,
-            executed=executed,
+            executed=executed and score_answer_quality,
         ),
-        "output_hygiene_passed": _output_hygiene_passed(hygiene, executed=executed),
+        "output_hygiene_passed": _output_hygiene_passed(
+            hygiene,
+            executed=executed and score_answer_quality,
+        ),
     }
+
+
+def _build_live_retrieval_results(
+    *,
+    cases: list[SmokeV2Case],
+    observations: dict[str, SmokeV2Observation],
+    top_k: int,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for case in cases:
+        observation = observations.get(case.case_id)
+        if observation is None:
+            observation = SmokeV2Observation(
+                executed=True,
+                error="live retrieval observation was not produced",
+            )
+        result = build_smoke_v2_case_result(
+            case=case,
+            observation=observation,
+            top_k=top_k,
+            status="evaluated",
+            score_answer_quality=False,
+        )
+        failure_reasons = _live_retrieval_failure_reasons(result=result, top_k=top_k)
+        if observation.error:
+            result["status"] = "error"
+        else:
+            result["status"] = "failed" if failure_reasons else "passed"
+        result["failure_reasons"] = failure_reasons
+        results.append(result)
+    return results
+
+
+def _live_retrieval_failure_reasons(*, result: dict[str, Any], top_k: int) -> list[str]:
+    observed = result["observed"]
+    expected = result["expected"]
+    scores = result["scores"]
+    reasons: list[str] = []
+    if observed.get("error"):
+        reasons.append(f"runner error: {observed['error']}")
+    if scores["route_hit"] is False:
+        reasons.append(
+            f"route mismatch: expected {expected['route']}, got {observed['route']}"
+        )
+    if scores["intent_hit"] is False:
+        reasons.append(
+            "intent mismatch: expected "
+            f"{expected['document_evidence_intent']}, got "
+            f"{observed['document_evidence_intent']}"
+        )
+    evidence_key = f"evidence_kind_hit@{top_k}"
+    if scores[evidence_key] is False:
+        reasons.append(
+            "primary evidence kind miss: expected "
+            f"{expected['primary_evidence_kind']}, got "
+            f"{observed['retrieved_evidence_kinds']}"
+        )
+    page_key = f"page_hit@{top_k}"
+    if scores[page_key] is False:
+        reasons.append(
+            f"page miss: expected {expected['pages']}, got {observed['citation_pages']}"
+        )
+    if scores["citation_anchor_valid"] is False:
+        reasons.append("no valid document citation page returned")
+    return reasons
 
 
 def _load_manifest_payload(path: Path) -> dict[str, Any]:
@@ -732,6 +881,7 @@ def _observation_has_execution_signal(observation: SmokeV2Observation) -> bool:
         (
             observation.route is not None,
             observation.document_evidence_intent is not None,
+            observation.retrieval_mode is not None,
             bool(observation.retrieved_evidence_kinds),
             bool(observation.citation_pages),
             bool(observation.retrieved_row_labels),
@@ -773,3 +923,7 @@ def _optional_str(value: object) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _escape_markdown_table(value: object) -> str:
+    return str(value).replace("|", "\\|").replace("\n", " ")

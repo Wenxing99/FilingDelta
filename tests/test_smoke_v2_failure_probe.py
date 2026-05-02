@@ -267,7 +267,13 @@ def _coverage(
 
 
 def _load_failure_probe_runner():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "run_smoke_v2_failure_probe.py"
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "archive"
+        / "eval_diagnostics"
+        / "run_smoke_v2_failure_probe.py"
+    )
     spec = importlib.util.spec_from_file_location("run_smoke_v2_failure_probe", script_path)
     assert spec is not None
     assert spec.loader is not None

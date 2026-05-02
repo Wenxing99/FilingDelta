@@ -1838,6 +1838,8 @@ def _load_page_text_shadow_module():
     script_path = (
         Path(__file__).resolve().parents[1]
         / "scripts"
+        / "archive"
+        / "eval_diagnostics"
         / "run_smoke_v2_page_text_rrf_shadow.py"
     )
     spec = importlib.util.spec_from_file_location(
@@ -1855,6 +1857,8 @@ def _load_page_text_grid_module():
     script_path = (
         Path(__file__).resolve().parents[1]
         / "scripts"
+        / "archive"
+        / "eval_diagnostics"
         / "run_smoke_v2_page_text_hybrid_grid.py"
     )
     spec = importlib.util.spec_from_file_location(
@@ -1873,6 +1877,8 @@ def _load_page_text_guard_module():
     script_path = (
         Path(__file__).resolve().parents[1]
         / "scripts"
+        / "archive"
+        / "eval_diagnostics"
         / "run_smoke_v2_page_text_hybrid_guard.py"
     )
     spec = importlib.util.spec_from_file_location(
@@ -1891,6 +1897,8 @@ def _load_hybrid_strategy_alignment_module():
     script_path = (
         Path(__file__).resolve().parents[1]
         / "scripts"
+        / "archive"
+        / "eval_diagnostics"
         / "run_smoke_v2_hybrid_strategy_alignment.py"
     )
     spec = importlib.util.spec_from_file_location(
@@ -1909,6 +1917,8 @@ def _load_no_table_row_strategy_module():
     script_path = (
         Path(__file__).resolve().parents[1]
         / "scripts"
+        / "archive"
+        / "eval_diagnostics"
         / "run_smoke_v2_no_table_row_strategy.py"
     )
     spec = importlib.util.spec_from_file_location(

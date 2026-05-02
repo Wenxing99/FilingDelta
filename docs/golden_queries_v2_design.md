@@ -323,16 +323,19 @@ Before turning this design into JSON and runner code, require:
 
 ## Current Implementation Status
 
-截至 2026-05-01，`golden_queries_v2` 的 eval-building 阶段已经阶段性收口：
+截至 2026-05-02，`golden_queries_v2` 的 eval-building 阶段已经阶段性收口：
 
 - anchor-confirmed smoke set 已从 `14` 条行业专项 case 扩到 `20` 条：`14` 条行业专项 + `6` 条 universal/general case。
 - Universal 6 的人工确认页码输入已放入 tracked 文件：`docs/eval_inputs/golden_queries_v2_universal6_review_notes.json`。
 - `data/outputs/eval/golden_queries_v2_smoke.json` 是生成物，不作为 source of truth 提交；需要时由 review notes、industry matrix、Universal 6 matrix 和 manifest builder 重建。
 - `expected_pages` 只允许来自 `human_confirmed_pages` / `human_corrected_pages`；candidate pages、Codex probe pages、Codex suggested pages、BM25/hybrid 命中页都不能自动升格为 gold。
+- `human_supporting_pages` 只记录 supporting evidence；它可以进入离线 matrix/report/notes，但不能进入 manifest `expected_pages` 或 primary page-hit 统计。
+- U-01 / U-02 已按用户确认扩展 gold 页码；U-04 的 primary gold 页是 `76, 77`，`81` 只是 partial supporting page，`57` 已删除。
 - BYD raw 已替换为完整年报，`NEV-01` 已迁到新 document key：`比亚迪_2025_annual_report-7906b664`，人工确认页码仍为 `25`。
 - 14 条行业专项页码已由用户再次复核通过；6 条 Universal 页码也已确认并进入 20-case manifest 草案。
 - 14 条 live retrieval pilot 的历史结果为 `6 passed / 8 failed`。BM25 / hybrid retrieval diagnosis 仍只是 page-hit-only 对照实验，不是正式系统接入。
 - failure probe 已把已知失败归因为四类：router intent mismatch、table extraction gap、rank/rerank issue、generic metric row dominance。
+- PageText BM25/RRF shadow、coarse grid 与 no-regression guard 仍是离线 eval tooling，尚未接入正式 `ChatQAService` 或 production retrieval。gold refresh 后的当前真实结论是：最佳 page_text weighted RRF/guard 口径为 `19/20` full primary page hit，另有 `U-04` partial support-only hit；这不是 QA 终局通过，也不是答案合成质量结论。
 
 ## Next Implementation Step
 

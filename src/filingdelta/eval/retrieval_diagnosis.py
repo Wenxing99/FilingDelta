@@ -272,12 +272,21 @@ def build_mode_result(
         if candidate.chunk.page_number is not None
     ]
     hit_pages = sorted(set(case.expected_pages).intersection(retrieved_pages))
+    supporting_hit_pages = sorted(set(case.supporting_pages).intersection(retrieved_pages))
+    page_match_status = _page_match_status(
+        primary_hit=bool(hit_pages),
+        supporting_hit=bool(supporting_hit_pages),
+    )
     return {
         "mode": mode,
         "hit": bool(hit_pages),
         "expected_pages": list(case.expected_pages),
+        "supporting_pages": list(case.supporting_pages),
         "retrieved_pages": retrieved_pages,
         "hit_pages": hit_pages,
+        "supporting_hit": bool(supporting_hit_pages),
+        "supporting_hit_pages": supporting_hit_pages,
+        "page_match_status": page_match_status,
         "retrieval_ms": retrieval_ms,
         "observed": observation_from_candidates(
             case=case,
@@ -290,6 +299,14 @@ def build_mode_result(
             for rank, candidate in enumerate(final_candidates, start=1)
         ],
     }
+
+
+def _page_match_status(*, primary_hit: bool, supporting_hit: bool) -> str:
+    if primary_hit:
+        return "primary_hit"
+    if supporting_hit:
+        return "partial_support_only"
+    return "miss"
 
 
 def build_live_pilot_context_from_query(query_result: dict[str, Any]) -> dict[str, Any]:

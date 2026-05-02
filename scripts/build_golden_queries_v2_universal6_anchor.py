@@ -334,20 +334,22 @@ def render_review_packet(report: dict[str, Any]) -> str:
         f"- 高置信候选：`{summary['auto_anchor_high_confidence']}`",
         f"- 低置信候选：`{summary['auto_anchor_low_confidence']}`",
         f"- no-hit / 需继续 probe：`{summary['needs_manual_probe']}`",
+        f"- supporting 页记录：`{summary.get('human_supporting_rows', 0)}`",
         f"- ready_for_manifest：`{summary['ready_for_manifest']}`",
         "",
         "## 口径",
         "",
         "- `candidate_pages` 是原文搜索候选页，不等于 `expected_pages`。",
         "- 只有 `human_confirmed_pages` / `human_corrected_pages` 能生成 `expected_pages`。",
+        "- `human_supporting_pages` 只作为 supporting evidence 展示，不进入 `expected_pages`。",
         "- `codex_suggested_gold_pages` 只是 Codex 建议页，仍需你最终确认，不会直接进入 manifest。",
         "- 页码使用 runtime / PyMuPDF 的 1-based page number，不使用 PDF 印刷页码。",
         "- `score_band` 只是页级搜索得分等级；最终 anchor 状态以 `status` 和人工页码确认为准。",
         "",
         "## 逐条候选",
         "",
-        "| 公司 | Query ID | 完整 query | 候选页 | human 页 | Codex 建议页 | review_status | status | score | snippet |",
-        "|---|---:|---|---|---|---|---|---|---:|---|",
+        "| 公司 | Query ID | 完整 query | 候选页 | human 页 | supporting 页 | Codex 建议页 | review_status | status | score | snippet |",
+        "|---|---:|---|---|---|---|---|---|---|---:|---|",
     ]
     for row in report["rows"]:
         lines.append(_review_packet_row(row))
@@ -422,6 +424,7 @@ def _base_row(
         "anchor_review_status": "not_reviewed",
         "human_confirmed_pages": [],
         "human_corrected_pages": [],
+        "human_supporting_pages": [],
         "human_rejected_candidate_pages": [],
         "human_missing_fields": [],
         "human_review_notes": "",
@@ -468,6 +471,7 @@ def _apply_review_note(row: dict[str, Any], review: dict[str, Any] | None) -> No
     row["anchor_review_status"] = str(review.get("status") or "human_reviewed")
     row["human_confirmed_pages"] = _int_list(review.get("human_confirmed_pages", []))
     row["human_corrected_pages"] = _int_list(review.get("human_corrected_pages", []))
+    row["human_supporting_pages"] = _int_list(review.get("human_supporting_pages", []))
     row["human_rejected_candidate_pages"] = _int_list(
         review.get("human_rejected_candidate_pages", [])
     )
@@ -616,6 +620,7 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, int]:
         "needs_manual_probe": sum(row["auto_anchor_status"] == "needs_manual_probe" for row in rows),
         "human_confirmed_rows": sum(bool(row["human_confirmed_pages"]) for row in rows),
         "human_corrected_rows": sum(bool(row["human_corrected_pages"]) for row in rows),
+        "human_supporting_rows": sum(bool(row.get("human_supporting_pages")) for row in rows),
         "ready_for_manifest": sum(bool(row["expected_pages"]) for row in rows),
     }
 
@@ -624,10 +629,11 @@ def _review_packet_row(row: dict[str, Any]) -> str:
     pages = _join_pages(row.get("candidate_pages", []))
     snippets = " / ".join(str(snippet) for snippet in row.get("candidate_snippets", [])[:2]) or "-"
     human_pages = _join_pages(_expected_pages_from_human(row))
+    supporting_pages = _join_pages(row.get("human_supporting_pages", []))
     suggested_pages = _join_pages(row.get("codex_suggested_gold_pages", []))
     return (
         f"| {_esc(row['company'])} | `{row['query_id']}` | {_esc(row['query'])} | "
-        f"{pages} | {human_pages} | {suggested_pages} | "
+        f"{pages} | {human_pages} | {supporting_pages} | {suggested_pages} | "
         f"`{row.get('anchor_review_status', 'not_reviewed')}` | "
         f"`{row['auto_anchor_status']}` | "
         f"{row.get('evidence_search_score', 0)} | "

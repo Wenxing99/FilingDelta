@@ -82,6 +82,7 @@ class SmokeV2Case:
     expected_section_types: tuple[str, ...] = ()
     expected_document_area_ids: tuple[str, ...] = ()
     expected_answer_field_ids: tuple[str, ...] = ()
+    supporting_pages: tuple[int, ...] = ()
     forbidden_failure_modes: tuple[str, ...] = ()
     answer_hygiene_checks: tuple[str, ...] = ()
     mvp_status: str = "immediate"
@@ -278,6 +279,7 @@ def build_smoke_v2_case_result(
             "primary_evidence_kind": case.primary_evidence_kind,
             "secondary_evidence_kinds": list(case.secondary_evidence_kinds),
             "pages": list(case.expected_pages),
+            "supporting_pages": list(case.supporting_pages),
             "row_labels": list(case.expected_row_labels),
             "metric_tags": list(case.expected_metric_tags),
             "section_types": list(case.expected_section_types),
@@ -428,7 +430,10 @@ def render_smoke_v2_markdown_summary(report: dict[str, Any]) -> str:
             "",
             "## 口径说明",
             "",
-            "- 本摘要只反映当前 manifest 中 14 条 anchor-confirmed case 的 live retrieval 结果。",
+            (
+                "- 本摘要只反映当前 manifest 中 "
+                f"{summary['total_queries']} 条 anchor-confirmed case 的 live retrieval 结果。"
+            ),
             "- 本轮没有修改 manifest gold 页码，也没有把失败 case 改成通过。",
             "- `required_fields_present`、`forbidden_failure_absent`、`output_hygiene_passed` 需要答案合成/字段判定，本轮 live retrieval-only pilot 不计入通过判定。",
             "",
@@ -574,6 +579,7 @@ def _load_cases(
                 primary_evidence_kind=primary_evidence_kind,
                 secondary_evidence_kinds=secondary_evidence_kinds,
                 expected_pages=_int_tuple(payload.get("expected_pages", [])),
+                supporting_pages=_int_tuple(payload.get("supporting_pages", [])),
                 query_aliases=_str_tuple(payload.get("query_aliases", [])),
                 company=_optional_str(payload.get("company")),
                 industry=_optional_str(payload.get("industry")),

@@ -180,12 +180,14 @@ def test_universal6_rows_are_smoke_manifest_builder_compatible(tmp_path: Path) -
     assert report["summary"]["ready_for_manifest"] == 0
     assert all(row["human_confirmed_pages"] == [] for row in report["rows"])
     assert all(row["human_corrected_pages"] == [] for row in report["rows"])
+    assert all(row["human_supporting_pages"] == [] for row in report["rows"])
     assert all(row["expected_pages"] == [] for row in report["rows"])
 
     manifest_matrix_path = tmp_path / "universal6_matrix.json"
     manifest_row = dict(report["rows"][0])
     manifest_row["human_confirmed_pages"] = [3]
     manifest_row["human_corrected_pages"] = [4, 3]
+    manifest_row["human_supporting_pages"] = [5]
     manifest_row["expected_pages"] = module._expected_pages_from_human(manifest_row)
     manifest_matrix_path.write_text(
         json.dumps({"rows": [manifest_row]}, ensure_ascii=False),
@@ -196,7 +198,9 @@ def test_universal6_rows_are_smoke_manifest_builder_compatible(tmp_path: Path) -
 
     assert manifest_report["summary"]["included_cases"] == 1
     assert manifest_report["included_cases"][0]["expected_pages"] == [3, 4]
+    assert manifest_report["included_cases"][0]["human_supporting_pages"] == [5]
     assert manifest_report["manifest"]["queries"][0]["expected_pages"] == [3, 4]
+    assert manifest_report["manifest"]["queries"][0]["supporting_pages"] == [5]
 
 
 def test_universal6_expected_pages_only_come_from_human_fields() -> None:
@@ -229,6 +233,7 @@ def test_universal6_review_notes_keep_codex_suggestions_out_of_expected_pages(
                         "query_id": "U-01",
                         "status": "human_confirmed_candidate_page",
                         "human_confirmed_pages": [8],
+                        "human_supporting_pages": [131],
                     },
                     {
                         "company": "腾讯控股",
@@ -252,6 +257,7 @@ def test_universal6_review_notes_keep_codex_suggestions_out_of_expected_pages(
 
     rows = {row["query_id"]: row for row in report["rows"]}
     assert rows["U-01"]["expected_pages"] == [8]
+    assert rows["U-01"]["human_supporting_pages"] == [131]
     assert rows["U-01"]["manifest_readiness"] == "ready_for_manifest"
     assert rows["U-02"]["codex_suggested_gold_pages"] == [9]
     assert rows["U-02"]["expected_pages"] == []
@@ -271,6 +277,7 @@ def test_universal6_review_packet_contains_full_query_text(tmp_path: Path) -> No
 
     assert "完整 query" in rendered
     assert "human 页" in rendered
+    assert "supporting 页" in rendered
     assert "Codex 建议页" in rendered
     for definition in module.UNIVERSAL6_DEFINITIONS:
         assert definition.company in rendered

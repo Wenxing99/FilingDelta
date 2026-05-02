@@ -11,7 +11,9 @@
       "query_id": "U-01",
       "status": "human_confirmed_pages",
       "human_confirmed_pages": [
-        8
+        8,
+        131,
+        19
       ],
       "human_corrected_pages": [],
       "human_rejected_candidate_pages": [],
@@ -22,14 +24,16 @@
         14,
         10
       ],
-      "human_review_notes": "最终确认页码：8。"
+      "human_review_notes": "最终确认页码：8；用户追加确认 131、19 也是 golden pages，保留用户语义顺序。"
     },
     {
       "company": "腾讯控股",
       "query_id": "U-02",
       "status": "human_confirmed_pages",
       "human_confirmed_pages": [
-        9
+        9,
+        196,
+        194
       ],
       "human_corrected_pages": [],
       "human_rejected_candidate_pages": [],
@@ -40,7 +44,7 @@
         14,
         27
       ],
-      "human_review_notes": "最终确认页码：9。"
+      "human_review_notes": "最终确认页码：9；用户确认 196、194 也是正确证据页，之前不能算 regression。"
     },
     {
       "company": "贵州茅台",
@@ -66,11 +70,13 @@
       "query_id": "U-04",
       "status": "human_confirmed_pages",
       "human_confirmed_pages": [
-        57,
         76,
         77
       ],
       "human_corrected_pages": [],
+      "human_supporting_pages": [
+        81
+      ],
       "human_rejected_candidate_pages": [],
       "codex_suggested_gold_pages": [
         57,
@@ -79,7 +85,7 @@
         309,
         72
       ],
-      "human_review_notes": "最终确认页码：57、76、77。"
+      "human_review_notes": "最终确认页码：76、77；用户确认 81 只是 partial support，不进入 expected_pages；57 删除。"
     },
     {
       "company": "比亚迪",

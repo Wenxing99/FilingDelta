@@ -201,6 +201,7 @@ def _manifest_query(row: dict[str, Any]) -> dict[str, Any]:
         "primary_evidence_kind": row["primary_evidence_kind"],
         "secondary_evidence_kinds": list(row.get("secondary_evidence_kinds", [])),
         "expected_pages": _expected_pages(row),
+        "supporting_pages": _supporting_pages(row),
         "expected_row_labels": list(row.get("expected_row_labels", [])),
         "expected_metric_tags": list(row.get("expected_metric_tags", [])),
         "expected_section_types": list(row.get("expected_section_types", [])),
@@ -222,10 +223,19 @@ def _expected_pages(row: dict[str, Any]) -> list[int]:
     return pages
 
 
+def _supporting_pages(row: dict[str, Any]) -> list[int]:
+    pages: list[int] = []
+    for page in row.get("human_supporting_pages", []):
+        if isinstance(page, int) and page not in pages:
+            pages.append(page)
+    return pages
+
+
 def _manifest_notes(row: dict[str, Any]) -> str:
     return (
         "expected_pages_source=human_confirmed_pages+human_corrected_pages; "
         f"anchor_review_status={row.get('anchor_review_status', 'not_reviewed')}; "
+        f"supporting_pages={_supporting_pages(row)}; "
         f"human_review_notes={row.get('human_review_notes', '')}; "
         f"codex_suggested_gold_pages_ignored={row.get('codex_suggested_gold_pages', [])}"
     )
@@ -254,6 +264,7 @@ def _summary_row(row: dict[str, Any]) -> dict[str, Any]:
         "expected_pages_source": "human_confirmed_pages+human_corrected_pages",
         "human_confirmed_pages": list(row.get("human_confirmed_pages", [])),
         "human_corrected_pages": list(row.get("human_corrected_pages", [])),
+        "human_supporting_pages": _supporting_pages(row),
         "human_review_notes": row.get("human_review_notes", ""),
     }
 
@@ -293,13 +304,14 @@ def render_summary_markdown(report: dict[str, Any]) -> str:
         "## 口径",
         "",
         "- `expected_pages` 只来自 `human_confirmed_pages + human_corrected_pages`。",
+        "- `human_supporting_pages` / `supporting_pages` 只用于离线诊断展示，不进入 `expected_pages`。",
         "- `candidate_pages`、`codex_anchor_pages` 和 `codex_suggested_gold_pages` 不能自动升格为 `expected_pages`。",
         "- 页码顺序保留用户反馈顺序，并去重。",
         "",
         "## 纳入 Case",
         "",
-        "| 公司 | Query ID | 问题 | expected_pages | 页码来源 |",
-        "|---|---:|---|---|---|",
+        "| 公司 | Query ID | 问题 | expected_pages | supporting_pages | 页码来源 |",
+        "|---|---:|---|---|---|---|",
     ]
     for case in report["included_cases"]:
         lines.append(_included_markdown_row(case))
@@ -322,13 +334,14 @@ def render_summary_markdown(report: dict[str, Any]) -> str:
 
 def _included_markdown_row(case: dict[str, Any]) -> str:
     pages = ", ".join(str(page) for page in case["expected_pages"])
+    supporting_pages = ", ".join(str(page) for page in case.get("human_supporting_pages", [])) or "-"
     source = (
         f"confirmed={case['human_confirmed_pages'] or '-'}; "
         f"corrected={case['human_corrected_pages'] or '-'}"
     )
     return (
         f"| {_esc(case['company'])} | `{case['query_id']}` | {_esc(case['query'])} | "
-        f"{pages} | {_esc(source)} |"
+        f"{pages} | {supporting_pages} | {_esc(source)} |"
     )
 
 

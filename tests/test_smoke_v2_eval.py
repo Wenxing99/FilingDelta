@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -304,6 +305,8 @@ def test_live_retrieval_markdown_summary_lists_case_results() -> None:
     assert "Golden Queries v2 Smoke Pilot Summary" in rendered
     assert "CMB-DEP-01" in rendered
     assert "page miss" in rendered
+    assert "1 条 anchor-confirmed case" in rendered
+    assert "14 条 anchor-confirmed case" not in rendered
 
 
 def test_bm25_scorer_ranks_matching_chunk_first() -> None:
@@ -573,6 +576,652 @@ def test_semantic_only_mode_result_exposes_live_observation_shape() -> None:
     assert observed["citation_pages"] == (30,)
 
 
+def test_page_text_shadow_mode_result_preserves_expected_pages_and_rejects_other_kinds() -> None:
+    module = _load_page_text_shadow_module()
+    manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
+    case = manifest.queries[0]
+    page_text_candidate = RetrievalCandidate(
+        chunk=_retrieved_chunk(
+            chunk_id="page-hit",
+            page_number=30,
+            chunk_kind="page_text",
+        ),
+        score=1.0,
+        rank_sources=(RankSource(source="bm25", rank=1, score=1.0),),
+    )
+
+    result = module.build_shadow_mode_result(
+        case=case,
+        mode="bm25_page_text",
+        candidates=[page_text_candidate],
+        final_top_k=6,
+        retrieval_ms=2,
+    )
+
+    assert case.expected_pages == (30, 47)
+    assert result["expected_pages"] == [30, 47]
+    assert result["retrieved_pages"] == [30]
+    assert result["page_match_status"] == "primary_hit"
+    assert result["observed"]["retrieved_evidence_kinds"] == ("page_text",)
+    with pytest.raises(ValueError, match="only accepts page_text"):
+        module.build_shadow_mode_result(
+            case=case,
+            mode="semantic_page_text",
+            candidates=[
+                RetrievalCandidate(
+                    chunk=_retrieved_chunk(
+                        chunk_id="table-row",
+                        page_number=30,
+                        chunk_kind="table_row",
+                    ),
+                    score=1.0,
+                    rank_sources=(RankSource(source="semantic", rank=1, score=1.0),),
+                )
+            ],
+            final_top_k=6,
+            retrieval_ms=2,
+        )
+
+
+def test_page_text_mode_result_distinguishes_supporting_page_hit() -> None:
+    module = _load_page_text_shadow_module()
+    payload = _manifest_payload()
+    payload["queries"][0]["supporting_pages"] = [81]
+    manifest = load_smoke_v2_manifest_from_payload(payload, base_dir=_base_dir())
+    case = manifest.queries[0]
+
+    result = module.build_shadow_mode_result(
+        case=case,
+        mode="bm25_page_text",
+        candidates=[
+            RetrievalCandidate(
+                chunk=_retrieved_chunk(
+                    chunk_id="support-only",
+                    page_number=81,
+                    chunk_kind="page_text",
+                ),
+                score=1.0,
+                rank_sources=(RankSource(source="bm25", rank=1, score=1.0),),
+            )
+        ],
+        final_top_k=6,
+        retrieval_ms=2,
+    )
+
+    assert result["hit"] is False
+    assert result["supporting_hit"] is True
+    assert result["supporting_pages"] == [81]
+    assert result["supporting_hit_pages"] == [81]
+    assert result["page_match_status"] == "partial_support_only"
+    page_text_candidates = [
+        RetrievalCandidate(
+            chunk=_retrieved_chunk(
+                chunk_id=f"page-text-{index}",
+                page_number=index,
+                chunk_kind="page_text",
+            ),
+            score=1.0,
+            rank_sources=(RankSource(source="bm25", rank=index, score=1.0),),
+        )
+        for index in range(1, 7)
+    ]
+    with pytest.raises(ValueError, match="only accepts page_text"):
+        module.build_shadow_mode_result(
+            case=case,
+            mode="semantic_page_text",
+            candidates=[
+                *page_text_candidates,
+                RetrievalCandidate(
+                    chunk=_retrieved_chunk(
+                        chunk_id="late-table-row",
+                        page_number=30,
+                        chunk_kind="table_row",
+                    ),
+                    score=0.1,
+                    rank_sources=(RankSource(source="semantic", rank=7, score=0.1),),
+                ),
+            ],
+            final_top_k=6,
+            retrieval_ms=2,
+        )
+
+
+def test_page_text_shadow_rrf_rank_sources_are_traceable() -> None:
+    module = _load_page_text_shadow_module()
+    manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
+    case = manifest.queries[0]
+    semantic = [
+        RetrievalCandidate(
+            chunk=_retrieved_chunk(
+                chunk_id="semantic-hit",
+                text="customer deposits changed in 2025",
+                page_number=30,
+                chunk_kind="page_text",
+            ),
+            score=0.8,
+            rank_sources=(RankSource(source="semantic", rank=1, score=0.8),),
+        )
+    ]
+    bm25 = BM25Index(
+        [
+            _retrieved_chunk(
+                chunk_id="bm25-hit",
+                text="customer deposits changed in 2025",
+                page_number=30,
+                chunk_kind="page_text",
+            )
+        ]
+    ).search("customer deposits", top_k=1)
+
+    result = module.build_shadow_mode_result(
+        case=case,
+        mode="hybrid_rrf_page_text",
+        candidates=reciprocal_rank_fusion(semantic, bm25),
+        final_top_k=6,
+        retrieval_ms=2,
+    )
+
+    rank_sources = result["top_results"][0]["rank_sources"]
+    assert result["top_results"][0]["chunk_kind"] == "page_text"
+    assert {source["source"] for source in rank_sources} == {"semantic", "bm25"}
+
+
+def test_page_text_shadow_summary_tracks_regression_and_baseline_page_miss_rescue() -> None:
+    module = _load_page_text_shadow_module()
+    baseline_passed = _page_text_shadow_case_result(
+        case_id="doc::PASS-01",
+        query_id="PASS-01",
+        baseline_status="passed",
+        baseline_page_hit=True,
+        mode_hits={
+            "semantic_page_text": True,
+            "bm25_page_text": False,
+            "hybrid_rrf_page_text": True,
+        },
+    )
+    baseline_page_miss = _page_text_shadow_case_result(
+        case_id="doc::MISS-01",
+        query_id="MISS-01",
+        baseline_status="failed",
+        baseline_page_hit=False,
+        mode_hits={
+            "semantic_page_text": False,
+            "bm25_page_text": True,
+            "hybrid_rrf_page_text": True,
+        },
+    )
+    partial_support = _page_text_shadow_case_result(
+        case_id="doc::U-04",
+        query_id="U-04",
+        baseline_status="failed",
+        baseline_page_hit=False,
+        mode_hits={
+            "semantic_page_text": False,
+            "bm25_page_text": False,
+            "hybrid_rrf_page_text": False,
+        },
+    )
+    partial_support["supporting_pages"] = [81]
+    partial_support["modes"]["hybrid_rrf_page_text"].update(
+        {
+            "supporting_hit": True,
+            "supporting_pages": [81],
+            "supporting_hit_pages": [81],
+            "retrieved_pages": [81],
+            "page_match_status": "partial_support_only",
+        }
+    )
+
+    summary = module.build_page_text_shadow_summary(
+        case_results=[baseline_passed, baseline_page_miss, partial_support],
+        final_top_k=6,
+    )
+
+    assert summary["baseline_passed_total"] == 1
+    assert summary["baseline_page_miss_total"] == 2
+    assert summary["previous_passed_regressions"]["bm25_page_text"][0]["query_id"] == "PASS-01"
+    rescue = summary["baseline_page_miss_rescue"][0]
+    assert rescue["query_id"] == "MISS-01"
+    assert rescue["rescued_by_modes"] == ["bm25_page_text", "hybrid_rrf_page_text"]
+    assert summary["mode_summary"]["hybrid_rrf_page_text"]["supporting_page_hit_count"] == 1
+    assert summary["mode_summary"]["hybrid_rrf_page_text"]["partial_support_only_cases"] == [
+        "doc::U-04"
+    ]
+    assert summary["by_intent"]["metric_value"]["bm25_page_text"]["hit_count"] == 1
+    assert summary["by_primary_evidence_kind"]["table_row"]["bm25_page_text"]["hit_count"] == 1
+
+
+def test_page_text_shadow_markdown_shows_summary_rescue_regression_and_snippets() -> None:
+    module = _load_page_text_shadow_module()
+    case_result = _page_text_shadow_case_result(
+        case_id="doc::MISS-01",
+        query_id="MISS-01",
+        baseline_status="failed",
+        baseline_page_hit=False,
+        mode_hits={
+            "semantic_page_text": False,
+            "bm25_page_text": True,
+            "hybrid_rrf_page_text": True,
+        },
+    )
+    summary = module.build_page_text_shadow_summary(
+        case_results=[case_result],
+        final_top_k=6,
+    )
+    summary["total_cases"] = 20
+    report = {
+        "manifest_path": "manifest.json",
+        "baseline_report": {"path": "baseline.json"},
+        "final_top_k": 6,
+        "summary": summary,
+        "cases": [case_result],
+    }
+
+    rendered = module.render_page_text_shadow_markdown(report)
+
+    assert "## 20-case 总结" in rendered
+    assert "Case 总数：`20`" in rendered
+    assert "Baseline Page-Miss Rescue" in rendered
+    assert "Baseline Passed Regression" in rendered
+    assert "MISS-01" in rendered
+    assert "top snippet for MISS-01" in rendered
+
+
+def test_page_text_hybrid_grid_builds_coarse_config_count() -> None:
+    module = _load_page_text_grid_module()
+
+    configs = module.build_grid_configs()
+
+    assert len(configs) == 160
+    assert configs[0].semantic_top_n == 5
+    assert configs[0].bm25_top_n == 5
+    assert configs[0].rrf_k == 20
+    assert configs[0].alpha_semantic == 0.25
+
+
+def test_weighted_rrf_alpha_extremes_follow_single_source_rank() -> None:
+    module = _load_page_text_grid_module()
+    semantic = [
+        _grid_candidate("semantic-1", page_number=1, source="semantic", rank=1),
+        _grid_candidate("semantic-2", page_number=2, source="semantic", rank=2),
+    ]
+    bm25 = [
+        _grid_candidate("bm25-3", page_number=3, source="bm25", rank=1),
+        _grid_candidate("bm25-4", page_number=4, source="bm25", rank=2),
+    ]
+
+    semantic_only = module.weighted_reciprocal_rank_fusion(
+        semantic,
+        bm25,
+        alpha_semantic=1.0,
+        rrf_k=20,
+    )
+    bm25_only = module.weighted_reciprocal_rank_fusion(
+        semantic,
+        bm25,
+        alpha_semantic=0.0,
+        rrf_k=20,
+    )
+
+    assert [candidate.chunk.page_number for candidate in semantic_only] == [1, 2]
+    assert [candidate.chunk.page_number for candidate in bm25_only] == [3, 4]
+
+
+def test_page_text_hybrid_grid_rejects_non_page_text_candidates() -> None:
+    module = _load_page_text_grid_module()
+
+    with pytest.raises(ValueError, match="only accepts page_text"):
+        module.weighted_reciprocal_rank_fusion(
+            [_grid_candidate("semantic-1", page_number=1, source="semantic", rank=1)],
+            [
+                RetrievalCandidate(
+                    chunk=_retrieved_chunk(
+                        chunk_id="table-row",
+                        page_number=2,
+                        chunk_kind="table_row",
+                    ),
+                    score=1.0,
+                    rank_sources=(RankSource(source="bm25", rank=1, score=1.0),),
+                )
+            ],
+            alpha_semantic=0.5,
+            rrf_k=20,
+        )
+
+
+def test_page_text_hybrid_grid_slices_cached_candidates_and_preserves_gold() -> None:
+    module = _load_page_text_grid_module()
+    manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
+    case = manifest.queries[0]
+    original_expected_pages = case.expected_pages
+    max_candidates = [
+        {
+            "case": case,
+            "baseline": {"status": "failed", "page_hit_at_k": False},
+            "semantic_candidates": [
+                _grid_candidate("s1", page_number=99, source="semantic", rank=1),
+                _grid_candidate("s2", page_number=98, source="semantic", rank=2),
+                _grid_candidate("s3", page_number=30, source="semantic", rank=3),
+            ],
+            "bm25_candidates": [
+                _grid_candidate("b1", page_number=97, source="bm25", rank=1),
+            ],
+        }
+    ]
+
+    miss = module.evaluate_grid_config(
+        config=module.GridConfig(
+            semantic_top_n=2,
+            bm25_top_n=1,
+            rrf_k=20,
+            alpha_semantic=0.75,
+        ),
+        max_candidates=max_candidates,
+        final_top_k=6,
+    )
+    hit = module.evaluate_grid_config(
+        config=module.GridConfig(
+            semantic_top_n=3,
+            bm25_top_n=1,
+            rrf_k=20,
+            alpha_semantic=0.75,
+        ),
+        max_candidates=max_candidates,
+        final_top_k=6,
+    )
+
+    assert case.expected_pages == original_expected_pages
+    assert miss["page_hit_count"] == 0
+    assert hit["page_hit_count"] == 1
+
+
+def test_page_text_hybrid_grid_retrieves_max_candidates_once_and_reuses_in_memory() -> None:
+    module = _load_page_text_grid_module()
+    manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
+    case = manifest.queries[0]
+    retriever = _CountingPageTextRetriever()
+    bm25 = _CountingBm25PageTextIndex()
+
+    max_candidates = module._retrieve_max_candidates(
+        cases=[case],
+        document_contexts={
+            case.document_key: {
+                "document_id": "doc",
+                "bm25_page_text": bm25,
+            }
+        },
+        retriever=retriever,
+        baseline_by_case_id={},
+        semantic_top_n=15,
+        bm25_top_n=15,
+    )
+    module.evaluate_grid_config(
+        config=module.GridConfig(semantic_top_n=5, bm25_top_n=5, rrf_k=20, alpha_semantic=0.5),
+        max_candidates=max_candidates,
+        final_top_k=6,
+    )
+    module.evaluate_grid_config(
+        config=module.GridConfig(semantic_top_n=15, bm25_top_n=15, rrf_k=60, alpha_semantic=0.25),
+        max_candidates=max_candidates,
+        final_top_k=6,
+    )
+
+    assert retriever.calls == 1
+    assert retriever.call_args == [
+        {
+            "document_id": "doc",
+            "question": case.query,
+            "top_k": 15,
+            "chunk_kind": "page_text",
+        }
+    ]
+    assert bm25.calls == 1
+    assert bm25.top_ks == [15]
+
+
+def test_page_text_hybrid_grid_summary_tracks_best_regression_and_rescue() -> None:
+    module = _load_page_text_grid_module()
+    baseline_passed = _page_text_grid_case_result(
+        case_id="doc::PASS-01",
+        query_id="PASS-01",
+        baseline_status="passed",
+        baseline_page_hit=True,
+        hit=False,
+    )
+    baseline_miss = _page_text_grid_case_result(
+        case_id="doc::MISS-01",
+        query_id="MISS-01",
+        baseline_status="failed",
+        baseline_page_hit=False,
+        hit=True,
+    )
+    support_only = _page_text_grid_case_result(
+        case_id="doc::U-04",
+        query_id="U-04",
+        baseline_status="failed",
+        baseline_page_hit=False,
+        hit=False,
+        supporting_hit=True,
+    )
+    evaluation = {
+        "config": module.GridConfig(5, 5, 20, 0.5).to_json(),
+        "page_hit_count": 1,
+        "primary_page_hit_count": 1,
+        "supporting_page_hit_count": 1,
+        "partial_support_only_count": 1,
+        "partial_support_only_query_ids": ["U-04"],
+        "total_cases": 3,
+        "page_hit_rate": 1 / 3,
+        "baseline_passed_regression_count": 1,
+        "baseline_page_miss_rescue_count": 1,
+        "regressed_query_ids": ["PASS-01"],
+        "rescued_query_ids": ["MISS-01"],
+        "watchlist": {"INS-01": {"hit": None}, "U-02": {"hit": None}},
+        "cases": [baseline_passed, baseline_miss, support_only],
+    }
+
+    summary = module.build_grid_summary(evaluations=[evaluation], final_top_k=6)
+    rendered = module.render_page_text_hybrid_grid_markdown(
+        {
+            "manifest_path": "manifest.json",
+            "baseline_report": {"path": "baseline.json"},
+            "summary": summary,
+            "best_cases": [baseline_passed, baseline_miss, support_only],
+        }
+    )
+
+    assert summary["best_overall"]["baseline_passed_regression_count"] == 1
+    assert summary["best_overall"]["baseline_page_miss_rescue_count"] == 1
+    assert summary["best_overall"]["supporting_page_hit_count"] == 1
+    assert summary["best_overall"]["partial_support_only_query_ids"] == ["U-04"]
+    assert "best_overall" in rendered
+    assert "partial_support_only" in rendered
+    assert "PASS-01" in rendered
+    assert "MISS-01" in rendered
+
+
+def test_page_text_hybrid_guard_preserves_expected_pages_and_rejects_other_kinds() -> None:
+    module = _load_page_text_guard_module()
+    manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
+    case = manifest.queries[0]
+    original_expected_pages = case.expected_pages
+
+    with pytest.raises(ValueError, match="only accepts page_text"):
+        module.build_guard_candidates(
+            variant=module.GuardVariant(id="bad", family="bad", description="bad"),
+            case=case,
+            baseline={},
+            semantic_candidates=[
+                _grid_candidate("semantic-page", page_number=30, source="semantic", rank=1)
+            ],
+            bm25_candidates=[
+                RetrievalCandidate(
+                    chunk=_retrieved_chunk(
+                        chunk_id="table-row",
+                        page_number=30,
+                        chunk_kind="table_row",
+                    ),
+                    score=1.0,
+                    rank_sources=(RankSource(source="bm25", rank=1, score=1.0),),
+                )
+            ],
+            final_top_k=6,
+        )
+
+    assert case.expected_pages == original_expected_pages
+
+
+def test_page_text_hybrid_guard_semantic_floor_retains_semantic_page() -> None:
+    module = _load_page_text_guard_module()
+    semantic = [_grid_candidate("semantic-hit", page_number=30, source="semantic", rank=1)]
+    ranked = [
+        _grid_candidate(f"bm25-only-{index}", page_number=90 + index, source="bm25", rank=index)
+        for index in range(1, 7)
+    ]
+
+    guarded = module.apply_semantic_floor(
+        ranked_candidates=ranked,
+        semantic_candidates=semantic,
+        floor_count=1,
+        final_top_k=6,
+    )
+
+    assert guarded[0].chunk.page_number == 30
+    assert len(guarded) == 6
+
+
+def test_page_text_hybrid_guard_bm25_only_cap_limits_non_semantic_pages() -> None:
+    module = _load_page_text_guard_module()
+    semantic = [_grid_candidate("semantic-hit", page_number=30, source="semantic", rank=1)]
+    ranked = [
+        _grid_candidate("bm25-only-1", page_number=91, source="bm25", rank=1),
+        _grid_candidate("bm25-only-2", page_number=92, source="bm25", rank=2),
+        _grid_candidate("semantic-copy", page_number=30, source="semantic", rank=1),
+        _grid_candidate("bm25-only-3", page_number=93, source="bm25", rank=3),
+    ]
+
+    guarded = module.apply_bm25_only_cap(
+        ranked_candidates=ranked,
+        semantic_candidates=semantic,
+        cap=1,
+        final_top_k=3,
+    )
+
+    assert [candidate.chunk.page_number for candidate in guarded] == [91, 30]
+
+
+def test_page_text_hybrid_guard_overlap_boost_promotes_overlap_page() -> None:
+    module = _load_page_text_guard_module()
+    overlap = _grid_candidate("overlap", page_number=30, source="semantic", rank=1, score=0.01)
+    other = _grid_candidate("other", page_number=99, source="bm25", rank=1, score=0.011)
+
+    boosted = module.apply_overlap_boost(
+        candidates=[other, overlap],
+        semantic_candidates=[overlap],
+        bm25_candidates=[_grid_candidate("bm25-overlap", page_number=30, source="bm25", rank=1)],
+        boost_weight=0.10,
+        rrf_k=20,
+    )
+
+    assert boosted[0].chunk.page_number == 30
+    assert boosted[0].rank_sources[-1].source == "overlap_boost"
+
+
+def test_page_text_hybrid_guard_summary_tracks_regression_and_rescue() -> None:
+    module = _load_page_text_guard_module()
+    variant = module.GuardVariant(
+        id="semantic_floor_top1",
+        family="semantic_floor",
+        description="test",
+    )
+    evaluation = module._build_variant_evaluation(
+        variant=variant,
+        cases=[
+            _page_text_grid_case_result(
+                case_id="doc::PASS-01",
+                query_id="PASS-01",
+                baseline_status="passed",
+                baseline_page_hit=True,
+                hit=False,
+            ),
+            _page_text_grid_case_result(
+                case_id="doc::MISS-01",
+                query_id="MISS-01",
+                baseline_status="failed",
+                baseline_page_hit=False,
+                hit=True,
+            ),
+            _page_text_grid_case_result(
+                case_id="doc::U-04",
+                query_id="U-04",
+                baseline_status="failed",
+                baseline_page_hit=False,
+                hit=False,
+                supporting_hit=True,
+            ),
+        ],
+    )
+
+    summary = module.build_guard_summary(evaluations=[evaluation], final_top_k=6)
+
+    assert summary["best_guard_variant"]["variant"]["id"] == "semantic_floor_top1"
+    assert summary["best_guard_variant"]["baseline_passed_regression_count"] == 1
+    assert summary["best_guard_variant"]["baseline_page_miss_rescue_count"] == 1
+    assert summary["best_guard_variant"]["supporting_page_hit_count"] == 1
+    assert summary["best_guard_variant"]["partial_support_only_query_ids"] == ["U-04"]
+
+
+def test_page_text_hybrid_guard_markdown_includes_u02_gold_refresh_check() -> None:
+    module = _load_page_text_guard_module()
+    variant = module.GuardVariant(
+        id="semantic_floor_top1",
+        family="semantic_floor",
+        description="test",
+    )
+    u02_case = _page_text_grid_case_result(
+        case_id="doc::U-02",
+        query_id="U-02",
+        baseline_status="passed",
+        baseline_page_hit=True,
+        hit=True,
+    )
+    evaluation = module._build_variant_evaluation(variant=variant, cases=[u02_case])
+    summary = module.build_guard_summary(evaluations=[evaluation], final_top_k=6)
+    report = {
+        "manifest_path": "manifest.json",
+        "baseline_report": {"path": "baseline.json"},
+        "summary": summary,
+        "best_cases": [u02_case],
+        "u02_gold_refresh_check": {
+            "case_id": "doc::U-02",
+            "query": "腾讯控股收入按业务分部如何构成？哪个分部最大？",
+            "expected_pages": [9, 196, 194],
+            "baseline": {"status": "passed", "page_hit_at_k": True},
+            "semantic_top_pages": [9, 10],
+            "bm25_top_pages": [196, 193],
+            "variant_pages": {
+                "weighted_rrf_best": [196, 193, 194, 193, 223, 167],
+                "semantic_floor_top1": [9, 196, 193, 194, 223, 167],
+            },
+            "best_variant_id": "semantic_floor_top1",
+            "expected_page_in_weighted_rrf_top6": True,
+            "expected_page_in_best_guard_top6": True,
+            "check_note": (
+                "After the gold refresh, U-02 is hit by weighted_rrf_best; "
+                "this is no longer a regression and should not be attributed to guard logic."
+            ),
+        },
+    }
+
+    rendered = module.render_page_text_hybrid_guard_markdown(report)
+
+    assert "U-02 Gold Refresh Check" in rendered
+    assert "U-02 Regression Diagnosis" not in rendered
+    assert "no longer a regression" in rendered
+    assert "guard avoids the weighted RRF regression" not in rendered
+    assert "weighted_rrf_best" in rendered
+
+
 @pytest.mark.parametrize("top_k", [0, -1])
 def test_report_rejects_non_positive_top_k(top_k) -> None:
     manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
@@ -828,6 +1477,7 @@ def test_anchor_confirmed_manifest_expected_pages_do_not_use_candidates(tmp_path
         candidate_pages=[25, 31, 32],
         human_confirmed_pages=[31],
         human_corrected_pages=[32, 31],
+        human_supporting_pages=[81],
     )
     row["codex_anchor_pages"] = [25, 4, 31, 39, 24]
     row["codex_suggested_gold_pages"] = [25, 4, 99]
@@ -837,7 +1487,9 @@ def test_anchor_confirmed_manifest_expected_pages_do_not_use_candidates(tmp_path
     query = report["manifest"]["queries"][0]
 
     assert query["expected_pages"] == [31, 32]
+    assert query["supporting_pages"] == [81]
     assert 25 not in query["expected_pages"]
+    assert 81 not in query["expected_pages"]
     assert 99 not in query["expected_pages"]
     assert report["included_cases"][0]["expected_pages_source"] == (
         "human_confirmed_pages+human_corrected_pages"
@@ -871,6 +1523,7 @@ def _load_run_smoke_v2_module():
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -885,6 +1538,60 @@ def _load_manifest_builder_module():
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_page_text_shadow_module():
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_smoke_v2_page_text_rrf_shadow.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "run_smoke_v2_page_text_rrf_shadow",
+        script_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_page_text_grid_module():
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_smoke_v2_page_text_hybrid_grid.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "run_smoke_v2_page_text_hybrid_grid",
+        script_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_page_text_guard_module():
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_smoke_v2_page_text_hybrid_guard.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "run_smoke_v2_page_text_hybrid_guard",
+        script_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -951,6 +1658,7 @@ def _industry_matrix_row(
     candidate_pages: list[int] | None = None,
     human_confirmed_pages: list[int] | None = None,
     human_corrected_pages: list[int] | None = None,
+    human_supporting_pages: list[int] | None = None,
     human_missing_fields: list[str] | None = None,
     auto_anchor_status: str = "auto_anchor_high_confidence",
 ) -> dict:
@@ -985,6 +1693,7 @@ def _industry_matrix_row(
         else "not_reviewed",
         "human_confirmed_pages": human_confirmed_pages or [],
         "human_corrected_pages": human_corrected_pages or [],
+        "human_supporting_pages": human_supporting_pages or [],
         "human_rejected_candidate_pages": [],
         "human_missing_fields": human_missing_fields or [],
         "human_review_notes": "test note",
@@ -1019,3 +1728,185 @@ def _diagnosis_mode(*, hit: bool) -> dict:
         "retrieved_pages": [31] if hit else [146],
         "top_results": [],
     }
+
+
+def _page_text_shadow_case_result(
+    *,
+    case_id: str,
+    query_id: str,
+    baseline_status: str,
+    baseline_page_hit: bool,
+    mode_hits: dict[str, bool],
+) -> dict:
+    modes = {}
+    for mode, hit in mode_hits.items():
+        retrieved_pages = [30] if hit else [99]
+        modes[mode] = {
+            "hit": hit,
+            "supporting_hit": False,
+            "page_match_status": "primary_hit" if hit else "miss",
+            "expected_pages": [30],
+            "supporting_pages": [],
+            "retrieved_pages": retrieved_pages,
+            "hit_pages": [30] if hit else [],
+            "supporting_hit_pages": [],
+            "top_results": [
+                {
+                    "rank": 1,
+                    "chunk_id": f"{mode}-chunk",
+                    "chunk_kind": "page_text",
+                    "page_number": retrieved_pages[0],
+                    "row_label": None,
+                    "section_title": None,
+                    "section_type": None,
+                    "metric_tags": [],
+                    "score": 1.0,
+                    "rank_sources": [{"source": "bm25", "rank": 1, "score": 1.0}],
+                    "preview": f"top snippet for {query_id}",
+                }
+            ],
+        }
+    return {
+        "id": case_id,
+        "query_id": query_id,
+        "query": f"query for {query_id}",
+        "expected_pages": [30],
+        "supporting_pages": [],
+        "expected_document_evidence_intent": "metric_value",
+        "primary_evidence_kind": "table_row",
+        "baseline": {
+            "status": baseline_status,
+            "page_hit_at_k": baseline_page_hit,
+            "observed_pages": [99],
+        },
+        "modes": modes,
+    }
+
+
+def _grid_candidate(
+    chunk_id: str,
+    *,
+    page_number: int,
+    source: str,
+    rank: int,
+    score: float = 1.0,
+) -> RetrievalCandidate:
+    return RetrievalCandidate(
+        chunk=_retrieved_chunk(
+            chunk_id=chunk_id,
+            page_number=page_number,
+            chunk_kind="page_text",
+            score=score,
+        ),
+        score=score,
+        rank_sources=(RankSource(source=source, rank=rank, score=score),),
+    )
+
+
+def _page_text_grid_case_result(
+    *,
+    case_id: str,
+    query_id: str,
+    baseline_status: str,
+    baseline_page_hit: bool,
+    hit: bool,
+    supporting_hit: bool = False,
+    page_match_status: str | None = None,
+) -> dict:
+    retrieved_pages = [30] if hit else [99]
+    if supporting_hit and not hit:
+        retrieved_pages = [81]
+    page_match_status = page_match_status or (
+        "primary_hit" if hit else "partial_support_only" if supporting_hit else "miss"
+    )
+    return {
+        "id": case_id,
+        "query_id": query_id,
+        "company": "TestCo",
+        "industry": "test_industry",
+        "query": f"query for {query_id}",
+        "expected_document_evidence_intent": "metric_value",
+        "primary_evidence_kind": "table_row",
+        "expected_pages": [30],
+        "supporting_pages": [81] if supporting_hit else [],
+        "baseline": {
+            "status": baseline_status,
+            "page_hit_at_k": baseline_page_hit,
+            "observed_pages": [99],
+        },
+        "config_id": "s5_b5_k20_a0p5",
+        "hit": hit,
+        "supporting_hit": supporting_hit,
+        "page_match_status": page_match_status,
+        "retrieved_pages": retrieved_pages,
+        "hit_pages": [30] if hit else [],
+        "supporting_hit_pages": [81] if supporting_hit else [],
+        "top_results": [
+            {
+                "rank": 1,
+                "chunk_id": f"{query_id}-chunk",
+                "chunk_kind": "page_text",
+                "page_number": retrieved_pages[0],
+                "row_label": None,
+                "section_title": None,
+                "section_type": None,
+                "metric_tags": [],
+                "score": 1.0,
+                "rank_sources": [{"source": "semantic", "rank": 1, "score": 1.0}],
+                "preview": f"top snippet for {query_id}",
+            }
+        ],
+    }
+
+
+class _CountingPageTextRetriever:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.call_args: list[dict[str, object]] = []
+
+    def retrieve(
+        self,
+        *,
+        document_id: str,
+        question: str,
+        top_k: int,
+        chunk_kind: str,
+    ) -> list[RetrievedChunk]:
+        self.calls += 1
+        self.call_args.append(
+            {
+                "document_id": document_id,
+                "question": question,
+                "top_k": top_k,
+                "chunk_kind": chunk_kind,
+            }
+        )
+        return [
+            _retrieved_chunk(
+                chunk_id=f"semantic-{index}",
+                page_number=index,
+                chunk_kind="page_text",
+                score=1 / index,
+            )
+            for index in range(1, top_k + 1)
+        ]
+
+
+class _CountingBm25PageTextIndex:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.top_ks: list[int] = []
+
+    def search(self, query: str, *, top_k: int) -> list[RetrievalCandidate]:
+        self.calls += 1
+        self.top_ks.append(top_k)
+        return [
+            _grid_candidate(
+                f"bm25-{index}",
+                page_number=index,
+                source="bm25",
+                rank=index,
+                score=1 / index,
+            )
+            for index in range(1, top_k + 1)
+        ]

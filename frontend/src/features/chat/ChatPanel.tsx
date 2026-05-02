@@ -339,6 +339,18 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     if (!mode) {
       return null;
     }
+    if (mode === "page_text_hybrid_no_table_primary") {
+      return "混合检索";
+    }
+    if (mode === "legacy_typed_table_row_primary") {
+      return "旧版表格优先";
+    }
+    if (mode === "mixed_page_text_hybrid_no_table_primary_external") {
+      return "Mixed QA + 混合检索";
+    }
+    if (mode === "mixed_legacy_typed_table_row_primary_external") {
+      return "Mixed QA + 旧版表格优先";
+    }
     if (mode === "semantic_with_keyword_fallback") {
       return "关键词回退";
     }

@@ -1,11 +1,16 @@
 from pathlib import Path
 
-from filingdelta.schemas.chat import ChatCitation, ChatRouteDecision, RetrievedChunk
+from filingdelta.core.config import Settings
+from filingdelta.retrieval.page_text_hybrid import retrieve_page_text_hybrid
+from filingdelta.schemas.chat import ChatAnswer, ChatCitation, ChatRouteDecision, RetrievedChunk
 from filingdelta.schemas.filing import EvidenceKind
 from filingdelta.services.chat_qa import (
+    LEGACY_TYPED_TABLE_ROW_PRIMARY,
+    PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
     _assemble_chat_citations,
     _dedupe_retrieved_chunks,
     _prioritize_retrieved_chunks,
+    _retrieve_document_evidence,
     _sanitize_user_facing_text,
     _select_document_retrieval_strategy,
 )
@@ -16,30 +21,63 @@ def test_select_document_retrieval_strategy_prefers_section_text_for_narrative_q
 
     assert strategy.primary_chunk_kind == EvidenceKind.SECTION_TEXT.value
     assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.fallback_retrieval_method == "page_text_hybrid"
+    assert strategy.retrieval_mode == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
 
 
 def test_select_document_retrieval_strategy_prefers_page_text_for_metric_questions() -> None:
     strategy = _select_document_retrieval_strategy("腾讯2025年资本开支是多少？")
 
-    assert strategy.primary_chunk_kind == EvidenceKind.TABLE_ROW.value
-    assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
-    assert strategy.include_fallback_when_primary_found
-    assert strategy.primary_top_k == 8
+    assert strategy.primary_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.primary_retrieval_method == "page_text_hybrid"
+    assert strategy.fallback_chunk_kind is None
+    assert strategy.retrieval_mode == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
 
 
 def test_select_document_retrieval_strategy_defaults_to_page_text() -> None:
     strategy = _select_document_retrieval_strategy("请总结这份文档")
 
     assert strategy.primary_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.primary_retrieval_method == "page_text_hybrid"
     assert strategy.fallback_chunk_kind is None
 
 
-def test_select_document_retrieval_strategy_prefers_table_row_for_customer_deposits() -> None:
+def test_select_document_retrieval_strategy_defaults_to_no_table_row_for_customer_deposits() -> None:
     strategy = _select_document_retrieval_strategy("招商银行客户存款有什么变化？")
+
+    assert strategy.primary_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.primary_retrieval_method == "page_text_hybrid"
+    assert strategy.retrieval_mode == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
+
+
+def test_select_document_retrieval_strategy_can_use_legacy_table_row_primary() -> None:
+    strategy = _select_document_retrieval_strategy(
+        "æ‹›å•†é“¶è¡Œå®¢æˆ·å­˜æ¬¾æœ‰ä»€ä¹ˆå˜åŒ–ï¼Ÿ",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="metric_value",
+        ),
+        chat_retrieval_strategy=LEGACY_TYPED_TABLE_ROW_PRIMARY,
+    )
 
     assert strategy.primary_chunk_kind == EvidenceKind.TABLE_ROW.value
     assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
     assert strategy.include_fallback_when_primary_found
+    assert strategy.primary_top_k == 8
+    assert strategy.retrieval_mode == LEGACY_TYPED_TABLE_ROW_PRIMARY
+
+
+def test_select_legacy_table_row_primary_for_customer_deposit_keyword_rule() -> None:
+    strategy = _select_document_retrieval_strategy(
+        "\u62db\u5546\u94f6\u884c\u5ba2\u6237\u5b58\u6b3e\u6709\u4ec0\u4e48\u53d8\u5316\uff1f",
+        chat_retrieval_strategy=LEGACY_TYPED_TABLE_ROW_PRIMARY,
+    )
+
+    assert strategy.primary_chunk_kind == EvidenceKind.TABLE_ROW.value
+    assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.include_fallback_when_primary_found
+    assert strategy.primary_top_k == 8
+    assert strategy.retrieval_mode == LEGACY_TYPED_TABLE_ROW_PRIMARY
 
 
 def test_select_document_retrieval_strategy_uses_metric_attribution_intent() -> None:
@@ -52,12 +90,12 @@ def test_select_document_retrieval_strategy_uses_metric_attribution_intent() -> 
     )
 
     assert strategy.primary_chunk_kind == EvidenceKind.SECTION_TEXT.value
-    assert strategy.fallback_chunk_kinds == (
-        EvidenceKind.TABLE_ROW.value,
-        EvidenceKind.PAGE_TEXT.value,
-    )
+    assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.fallback_chunk_kinds == ()
+    assert strategy.fallback_retrieval_method == "page_text_hybrid"
     assert strategy.include_fallback_when_primary_found
     assert strategy.primary_top_k == 4
+    assert strategy.fallback_top_k == 4
 
 
 def test_select_document_retrieval_strategy_uses_metric_value_intent() -> None:
@@ -69,9 +107,9 @@ def test_select_document_retrieval_strategy_uses_metric_value_intent() -> None:
         ),
     )
 
-    assert strategy.primary_chunk_kind == EvidenceKind.TABLE_ROW.value
-    assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
-    assert strategy.include_fallback_when_primary_found
+    assert strategy.primary_chunk_kind == EvidenceKind.PAGE_TEXT.value
+    assert strategy.primary_retrieval_method == "page_text_hybrid"
+    assert strategy.fallback_chunk_kind is None
 
 
 def test_select_document_retrieval_strategy_uses_business_narrative_intent() -> None:
@@ -85,7 +123,205 @@ def test_select_document_retrieval_strategy_uses_business_narrative_intent() -> 
 
     assert strategy.primary_chunk_kind == EvidenceKind.SECTION_TEXT.value
     assert strategy.fallback_chunk_kind == EvidenceKind.PAGE_TEXT.value
-    assert not strategy.include_fallback_when_primary_found
+    assert strategy.fallback_retrieval_method == "page_text_hybrid"
+    assert strategy.include_fallback_when_primary_found
+    assert strategy.primary_top_k == 4
+    assert strategy.fallback_top_k == 4
+
+
+def test_default_settings_use_page_text_hybrid_no_table_primary(monkeypatch) -> None:
+    monkeypatch.delenv("FILINGDELTA_CHAT_RETRIEVAL_STRATEGY", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.filingdelta_chat_retrieval_strategy == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
+
+
+def test_chat_answer_accepts_new_retrieval_modes() -> None:
+    answer = ChatAnswer(
+        document_id="doc-test",
+        session_id="session-test",
+        question="question",
+        answer="answer",
+        retrieval_mode=PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
+    )
+    legacy_answer = ChatAnswer(
+        document_id="doc-test",
+        session_id="session-test",
+        question="question",
+        answer="answer",
+        retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
+    )
+
+    assert answer.retrieval_mode == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
+    assert legacy_answer.retrieval_mode == LEGACY_TYPED_TABLE_ROW_PRIMARY
+
+
+def test_retrieve_document_evidence_hybrid_without_page_text_corpus_returns_empty() -> None:
+    strategy = _select_document_retrieval_strategy(
+        "segment revenue?",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="metric_value",
+        ),
+    )
+    retriever = _FakeRetriever(
+        {
+            EvidenceKind.PAGE_TEXT.value: [
+                _chunk("semantic-page", document_id="doc-a", kind=EvidenceKind.PAGE_TEXT.value)
+            ]
+        }
+    )
+
+    chunks, retrieval_mode = _retrieve_document_evidence(
+        retriever=retriever,
+        document_id="doc-a",
+        question="segment revenue?",
+        callback_manager=None,
+        strategy=strategy,
+    )
+
+    assert chunks == []
+    assert retrieval_mode == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
+    assert retriever.calls == []
+
+
+def test_metric_value_default_retrieval_does_not_query_table_row() -> None:
+    strategy = _select_document_retrieval_strategy(
+        "segment revenue?",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="metric_value",
+        ),
+    )
+    page_text = _chunk(
+        "page-text",
+        document_id="doc-a",
+        kind=EvidenceKind.PAGE_TEXT.value,
+        text="segment revenue was 100",
+    )
+    retriever = _FakeRetriever({EvidenceKind.PAGE_TEXT.value: [page_text]})
+
+    chunks, retrieval_mode = _retrieve_document_evidence(
+        retriever=retriever,
+        document_id="doc-a",
+        question="segment revenue",
+        callback_manager=None,
+        strategy=strategy,
+        page_text_chunks=[page_text],
+    )
+
+    assert retrieval_mode == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
+    assert [call["chunk_kind"] for call in retriever.calls] == [EvidenceKind.PAGE_TEXT.value]
+    assert all(chunk.chunk_kind == EvidenceKind.PAGE_TEXT.value for chunk in chunks)
+
+
+def test_metric_attribution_retrieval_keeps_section_text_with_page_text_hybrid() -> None:
+    section = _chunk("section", document_id="doc-a", kind=EvidenceKind.SECTION_TEXT.value)
+    page_text = _chunk(
+        "page-text",
+        document_id="doc-a",
+        kind=EvidenceKind.PAGE_TEXT.value,
+        text="management explained revenue growth",
+    )
+    retriever = _FakeRetriever(
+        {
+            EvidenceKind.SECTION_TEXT.value: [section],
+            EvidenceKind.PAGE_TEXT.value: [page_text],
+        }
+    )
+    strategy = _select_document_retrieval_strategy(
+        "why did revenue grow?",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="metric_attribution",
+        ),
+    )
+
+    chunks, _ = _retrieve_document_evidence(
+        retriever=retriever,
+        document_id="doc-a",
+        question="revenue growth",
+        callback_manager=None,
+        strategy=strategy,
+        page_text_chunks=[page_text],
+    )
+
+    assert [call["chunk_kind"] for call in retriever.calls] == [
+        EvidenceKind.SECTION_TEXT.value,
+        EvidenceKind.PAGE_TEXT.value,
+    ]
+    assert {chunk.chunk_kind for chunk in chunks} == {
+        EvidenceKind.SECTION_TEXT.value,
+        EvidenceKind.PAGE_TEXT.value,
+    }
+
+
+def test_business_narrative_retrieval_keeps_section_text_with_page_text_hybrid() -> None:
+    section = _chunk("section", document_id="doc-a", kind=EvidenceKind.SECTION_TEXT.value)
+    page_text = _chunk(
+        "page-text",
+        document_id="doc-a",
+        kind=EvidenceKind.PAGE_TEXT.value,
+        text="risk controls and response measures",
+    )
+    retriever = _FakeRetriever(
+        {
+            EvidenceKind.SECTION_TEXT.value: [section],
+            EvidenceKind.PAGE_TEXT.value: [page_text],
+        }
+    )
+    strategy = _select_document_retrieval_strategy(
+        "what risks are disclosed?",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="business_narrative",
+        ),
+    )
+
+    chunks, _ = _retrieve_document_evidence(
+        retriever=retriever,
+        document_id="doc-a",
+        question="risk response",
+        callback_manager=None,
+        strategy=strategy,
+        page_text_chunks=[page_text],
+    )
+
+    assert [call["chunk_kind"] for call in retriever.calls] == [
+        EvidenceKind.SECTION_TEXT.value,
+        EvidenceKind.PAGE_TEXT.value,
+    ]
+    assert {chunk.chunk_kind for chunk in chunks} == {
+        EvidenceKind.SECTION_TEXT.value,
+        EvidenceKind.PAGE_TEXT.value,
+    }
+
+
+def test_page_text_hybrid_bm25_corpus_does_not_cross_document_id() -> None:
+    retriever = _FakeRetriever({EvidenceKind.PAGE_TEXT.value: []})
+    doc_a_chunk = _chunk(
+        "doc-a-page",
+        document_id="doc-a",
+        kind=EvidenceKind.PAGE_TEXT.value,
+        text="ordinary disclosure",
+    )
+    doc_b_chunk = _chunk(
+        "doc-b-page",
+        document_id="doc-b",
+        kind=EvidenceKind.PAGE_TEXT.value,
+        text="unique cross document bm25 term",
+    )
+
+    chunks = retrieve_page_text_hybrid(
+        retriever=retriever,
+        document_id="doc-a",
+        question="unique cross document bm25 term",
+        page_text_chunks=[doc_a_chunk, doc_b_chunk],
+    )
+
+    assert chunks == []
+    assert [call["document_id"] for call in retriever.calls] == ["doc-a"]
 
 
 def test_sanitize_user_facing_text_removes_empty_citation_parentheses_and_preserves_lists() -> None:
@@ -95,6 +331,9 @@ def test_sanitize_user_facing_text_removes_empty_citation_parentheses_and_preser
         "核心存款（16日均余额口径）同比增长。\n"
         "核心存款（16日均）为77,442.68亿元。\n"
         "核心存款**16日均余额77,442.68亿元**。\n"
+        "16日均余额同比增长。\n"
+        "16日均继续改善。\n"
+        "16平均余额提升。\n"
         "- 可用于观察资本效率 (WEB_3)。 score=0.82"
     )
 
@@ -106,10 +345,14 @@ def test_sanitize_user_facing_text_removes_empty_citation_parentheses_and_preser
     assert "score=" not in cleaned
     assert "16日均余额" not in cleaned
     assert "16日均" not in cleaned
+    assert "16平均余额" not in cleaned
     assert "核心存款日均余额" in cleaned
     assert "核心存款（日均余额口径）" in cleaned
     assert "核心存款（日均）" in cleaned
     assert "核心存款**日均余额77,442.68亿元**" in cleaned
+    assert "日均余额同比增长" in cleaned
+    assert "日均继续改善" in cleaned
+    assert "平均余额提升" in cleaned
     assert "说明：\n- 衡量股东权益回报" in cleaned
     assert "\n- 可用于观察资本效率" in cleaned
 
@@ -257,3 +500,48 @@ def test_prioritize_retrieved_chunks_prefers_group_customer_deposit_rows() -> No
     )
 
     assert [chunk.chunk_id for chunk in prioritized] == ["group-row", "company-row"]
+
+
+class _FakeRetriever:
+    def __init__(self, responses: dict[str | None, list[RetrievedChunk]]) -> None:
+        self._responses = responses
+        self.calls: list[dict[str, object]] = []
+
+    def retrieve(
+        self,
+        *,
+        document_id: str,
+        question: str,
+        top_k: int = 6,
+        chunk_kind: str | None = None,
+        callback_manager=None,
+    ) -> list[RetrievedChunk]:
+        self.calls.append(
+            {
+                "document_id": document_id,
+                "question": question,
+                "top_k": top_k,
+                "chunk_kind": chunk_kind,
+                "callback_manager": callback_manager,
+            }
+        )
+        return list(self._responses.get(chunk_kind, []))[:top_k]
+
+
+def _chunk(
+    chunk_id: str,
+    *,
+    document_id: str,
+    kind: str,
+    text: str = "sample disclosure text",
+    page_number: int = 1,
+) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        page_number=page_number,
+        source_path=Path("data/raw/test.pdf"),
+        text=text,
+        chunk_kind=kind,
+        score=1.0,
+    )

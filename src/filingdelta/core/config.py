@@ -65,6 +65,13 @@ class Settings(BaseSettings):
         default="./data/indexes/qdrant",
         alias="FILINGDELTA_QDRANT_PATH",
     )
+    filingdelta_chat_retrieval_strategy: Literal[
+        "page_text_hybrid_no_table_primary",
+        "legacy_typed_table_row_primary",
+    ] = Field(
+        default="page_text_hybrid_no_table_primary",
+        alias="FILINGDELTA_CHAT_RETRIEVAL_STRATEGY",
+    )
 
     llama_cloud_api_key: str | None = Field(
         default=None,
@@ -119,6 +126,7 @@ class Settings(BaseSettings):
             "llama_extract_tier": self.filingdelta_llama_extract_tier,
             "openai_base_url_configured": bool(self.openai_base_url),
             "qdrant_path": str(self.qdrant_path),
+            "chat_retrieval_strategy": self.filingdelta_chat_retrieval_strategy,
         }
 
 

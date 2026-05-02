@@ -1,3 +1,4 @@
+from filingdelta.prompts.chat_answer import CHAT_ANSWER_PROMPT
 from filingdelta.prompts.chat_router import CHAT_ROUTER_PROMPT
 
 
@@ -46,3 +47,17 @@ def test_chat_router_prompt_keeps_inventory_channel_efficiency_as_attribution() 
         "needs_external_background=false, needs_risk_reasoning=false, "
         "document_evidence_intent=business_narrative"
     ) in prompt
+
+
+def test_chat_answer_prompt_preserves_customer_deposit_ratio_numbers() -> None:
+    prompt = CHAT_ANSWER_PROMPT.template
+
+    assert "Numeric completeness" in prompt
+    assert "customer deposits" in prompt
+    assert "deposit structure" in prompt
+    assert "demand-deposit/current-deposit ratio" in prompt
+    assert "daily-average balance share" in prompt
+    assert "percentage-point change" in prompt
+    assert "客户存款" in prompt
+    assert "活期存款占比" in prompt
+    assert "日均余额占比" in prompt

@@ -74,8 +74,13 @@ FilingDelta 第一版最重要的能力是：
   - step-level telemetry
 - typed evidence retrieval 的第一轮演进：
   - `section_text` 用于叙述型 / 风险 / 战略类问题
-  - `table_row` 用于指标 / 表格类问题
+  - `table_row` 保留为指标 / 表格类辅助结构，但 heuristic table_row primary 已降级为非默认回退
   - `page_text` 继续作为 citation anchor 和 fallback
+- eval / diagnostics：
+  - 已形成 20 条 anchor-confirmed golden smoke case
+  - 已有离线 runner / schema 覆盖 route、intent、evidence kind、page hit 和输出卫生口径
+  - 当前 BM25/RRF shadow 结论只证明 retrieval page-hit 改善，不代表最终 answer synthesis 通过
+  - 默认文档 QA 检索已转向 `page_text` BM25/RRF hybrid + `section_text` typed retrieval；legacy table-row primary 仅作为配置回退
 
 当前 demo 以**单文档可追溯阅读**为主；双文档 `Compare / diff` 能力仍在下一阶段推进。
 

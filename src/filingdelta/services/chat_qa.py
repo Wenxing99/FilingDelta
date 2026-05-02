@@ -19,6 +19,11 @@ from filingdelta.agents.chat_router import ChatRouterAgent
 from filingdelta.core.config import Settings, get_settings
 from filingdelta.ingestion.pipeline import FilingIngestionPipeline
 from filingdelta.retrieval.indexer import DocumentChunkIndexer, chunk_node_id
+from filingdelta.retrieval.page_text_hybrid import (
+    PageTextHybridConfig,
+    evidence_units_to_page_text_chunks,
+    retrieve_page_text_hybrid,
+)
 from filingdelta.retrieval.retriever import DocumentChunkRetriever
 from filingdelta.schemas.chat import (
     ChatAnswer,
@@ -38,6 +43,9 @@ from filingdelta.services.chat_telemetry import ChatTelemetryRecorder
 
 
 ChatStatusCallback = Callable[[str, str], Awaitable[None]]
+
+PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY = "page_text_hybrid_no_table_primary"
+LEGACY_TYPED_TABLE_ROW_PRIMARY = "legacy_typed_table_row_primary"
 
 _KEYWORD_FALLBACK_TERMS = (
     "股息",
@@ -311,6 +319,7 @@ class ChatQAService:
                 retrieval_strategy = _select_document_retrieval_strategy(
                     plan.document_query,
                     route_decision=route_decision,
+                    chat_retrieval_strategy=self._settings.filingdelta_chat_retrieval_strategy,
                 )
                 semantic_chunks, document_retrieval_mode = await asyncio.to_thread(
                     _retrieve_document_evidence,
@@ -319,8 +328,15 @@ class ChatQAService:
                     question=plan.document_query,
                     callback_manager=telemetry.callback_manager,
                     strategy=retrieval_strategy,
+                    page_text_chunks=evidence_units_to_page_text_chunks(
+                        document_id=document_id,
+                        evidence_units=bundle.evidence_units,
+                    ),
                 )
-            if retrieval_strategy.primary_chunk_kind == EvidenceKind.PAGE_TEXT.value:
+            if (
+                retrieval_strategy.primary_chunk_kind == EvidenceKind.PAGE_TEXT.value
+                and retrieval_strategy.primary_retrieval_method == "semantic"
+            ):
                 retrieved_chunks, document_retrieval_mode = _merge_keyword_fallback(
                     question=plan.document_query,
                     document_id=document_id,
@@ -665,14 +681,90 @@ class _DocumentRetrievalStrategy:
     include_fallback_when_primary_found: bool = False
     primary_top_k: int = 6
     fallback_top_k: int = 6
-    retrieval_mode: str = "semantic_with_filters"
+    primary_retrieval_method: str = "semantic"
+    fallback_retrieval_method: str = "semantic"
+    retrieval_mode: str = PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY
 
 
 def _select_document_retrieval_strategy(
     question: str,
     route_decision: ChatRouteDecision | None = None,
+    chat_retrieval_strategy: str = PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
 ) -> _DocumentRetrievalStrategy:
-    intent_strategy = _select_document_retrieval_strategy_from_intent(route_decision)
+    if chat_retrieval_strategy == LEGACY_TYPED_TABLE_ROW_PRIMARY:
+        return _select_legacy_document_retrieval_strategy(
+            question,
+            route_decision=route_decision,
+        )
+
+    intent_strategy = _select_no_table_row_document_retrieval_strategy_from_intent(route_decision)
+    if intent_strategy is not None:
+        return intent_strategy
+
+    normalized_question = _normalize_for_match(question)
+    if any(_normalize_for_match(term) in normalized_question for term in _SECTION_TEXT_PREFER_TERMS):
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
+            fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            fallback_retrieval_method="page_text_hybrid",
+            include_fallback_when_primary_found=True,
+            fallback_top_k=4,
+            retrieval_mode=PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
+        )
+    if any(_normalize_for_match(term) in normalized_question for term in _PAGE_TEXT_PREFER_TERMS):
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            primary_retrieval_method="page_text_hybrid",
+            retrieval_mode=PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
+        )
+    return _DocumentRetrievalStrategy(
+        primary_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+        primary_retrieval_method="page_text_hybrid",
+        retrieval_mode=PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
+    )
+
+
+def _select_no_table_row_document_retrieval_strategy_from_intent(
+    route_decision: ChatRouteDecision | None,
+) -> _DocumentRetrievalStrategy | None:
+    if route_decision is None:
+        return None
+
+    intent = route_decision.document_evidence_intent
+    if intent == "metric_value":
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            primary_retrieval_method="page_text_hybrid",
+            retrieval_mode=PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
+        )
+    if intent == "metric_attribution":
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
+            fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            fallback_retrieval_method="page_text_hybrid",
+            include_fallback_when_primary_found=True,
+            primary_top_k=4,
+            fallback_top_k=4,
+            retrieval_mode=PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
+        )
+    if intent == "business_narrative":
+        return _DocumentRetrievalStrategy(
+            primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
+            fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
+            fallback_retrieval_method="page_text_hybrid",
+            include_fallback_when_primary_found=True,
+            primary_top_k=4,
+            fallback_top_k=4,
+            retrieval_mode=PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY,
+        )
+    return None
+
+
+def _select_legacy_document_retrieval_strategy(
+    question: str,
+    route_decision: ChatRouteDecision | None = None,
+) -> _DocumentRetrievalStrategy:
+    intent_strategy = _select_legacy_document_retrieval_strategy_from_intent(route_decision)
     if intent_strategy is not None:
         return intent_strategy
 
@@ -684,26 +776,26 @@ def _select_document_retrieval_strategy(
             include_fallback_when_primary_found=True,
             primary_top_k=8,
             fallback_top_k=4,
-            retrieval_mode="semantic_with_filters",
+            retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
         )
     if any(_normalize_for_match(term) in normalized_question for term in _PAGE_TEXT_PREFER_TERMS):
         return _DocumentRetrievalStrategy(
             primary_chunk_kind=EvidenceKind.PAGE_TEXT.value,
-            retrieval_mode="semantic_with_filters",
+            retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
         )
     if any(_normalize_for_match(term) in normalized_question for term in _SECTION_TEXT_PREFER_TERMS):
         return _DocumentRetrievalStrategy(
             primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
             fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
-            retrieval_mode="semantic_with_filters",
+            retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
         )
     return _DocumentRetrievalStrategy(
         primary_chunk_kind=EvidenceKind.PAGE_TEXT.value,
-        retrieval_mode="semantic_with_filters",
+        retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
     )
 
 
-def _select_document_retrieval_strategy_from_intent(
+def _select_legacy_document_retrieval_strategy_from_intent(
     route_decision: ChatRouteDecision | None,
 ) -> _DocumentRetrievalStrategy | None:
     if route_decision is None:
@@ -717,7 +809,7 @@ def _select_document_retrieval_strategy_from_intent(
             include_fallback_when_primary_found=True,
             primary_top_k=8,
             fallback_top_k=4,
-            retrieval_mode="semantic_with_filters",
+            retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
         )
     if intent == "metric_attribution":
         return _DocumentRetrievalStrategy(
@@ -726,13 +818,13 @@ def _select_document_retrieval_strategy_from_intent(
             include_fallback_when_primary_found=True,
             primary_top_k=4,
             fallback_top_k=3,
-            retrieval_mode="semantic_with_filters",
+            retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
         )
     if intent == "business_narrative":
         return _DocumentRetrievalStrategy(
             primary_chunk_kind=EvidenceKind.SECTION_TEXT.value,
             fallback_chunk_kind=EvidenceKind.PAGE_TEXT.value,
-            retrieval_mode="semantic_with_filters",
+            retrieval_mode=LEGACY_TYPED_TABLE_ROW_PRIMARY,
         )
     return None
 
@@ -744,12 +836,16 @@ def _retrieve_document_evidence(
     question: str,
     callback_manager: CallbackManager | None,
     strategy: _DocumentRetrievalStrategy,
+    page_text_chunks: list[RetrievedChunk] | None = None,
 ) -> tuple[list[RetrievedChunk], str]:
-    primary_chunks = retriever.retrieve(
+    primary_chunks = _retrieve_strategy_step(
+        retriever=retriever,
         document_id=document_id,
         question=question,
         top_k=strategy.primary_top_k,
         chunk_kind=strategy.primary_chunk_kind,
+        retrieval_method=strategy.primary_retrieval_method,
+        page_text_chunks=page_text_chunks or [],
         callback_manager=callback_manager,
     )
     fallback_chunk_kinds = strategy.fallback_chunk_kinds
@@ -764,11 +860,14 @@ def _retrieve_document_evidence(
     fallback_chunks: list[RetrievedChunk] = []
     for fallback_chunk_kind in fallback_chunk_kinds:
         fallback_chunks.extend(
-            retriever.retrieve(
+            _retrieve_strategy_step(
+                retriever=retriever,
                 document_id=document_id,
                 question=question,
                 top_k=strategy.fallback_top_k,
                 chunk_kind=fallback_chunk_kind,
+                retrieval_method=strategy.fallback_retrieval_method,
+                page_text_chunks=page_text_chunks or [],
                 callback_manager=callback_manager,
             )
         )
@@ -778,6 +877,37 @@ def _retrieve_document_evidence(
     if fallback_chunks:
         return fallback_chunks, strategy.retrieval_mode
     return [], strategy.retrieval_mode
+
+
+def _retrieve_strategy_step(
+    *,
+    retriever: DocumentChunkRetriever,
+    document_id: str,
+    question: str,
+    top_k: int,
+    chunk_kind: str,
+    retrieval_method: str,
+    page_text_chunks: list[RetrievedChunk],
+    callback_manager: CallbackManager | None,
+) -> list[RetrievedChunk]:
+    if retrieval_method == "page_text_hybrid":
+        if chunk_kind != EvidenceKind.PAGE_TEXT.value:
+            raise ValueError("page_text_hybrid retrieval can only be used with page_text chunks.")
+        return retrieve_page_text_hybrid(
+            retriever=retriever,
+            document_id=document_id,
+            question=question,
+            page_text_chunks=page_text_chunks,
+            config=PageTextHybridConfig(final_top_k=top_k),
+            callback_manager=callback_manager,
+        )
+    return retriever.retrieve(
+        document_id=document_id,
+        question=question,
+        top_k=top_k,
+        chunk_kind=chunk_kind,
+        callback_manager=callback_manager,
+    )
 
 
 def _dedupe_retrieved_chunks(chunks: list[RetrievedChunk]) -> list[RetrievedChunk]:
@@ -885,6 +1015,8 @@ def _merge_keyword_fallback(
     if not keyword_matches:
         return semantic_chunks, retrieval_mode
 
+    if retrieval_mode == LEGACY_TYPED_TABLE_ROW_PRIMARY:
+        return keyword_matches[:2], retrieval_mode
     return keyword_matches[:2], "semantic_with_keyword_fallback"
 
 
@@ -1027,6 +1159,10 @@ def _resolve_retrieval_mode(
         return "unsupported"
     if has_external_result and route in {"concept_only", "mixed"}:
         if route == "mixed" and document_retrieval_mode:
+            if document_retrieval_mode == PAGE_TEXT_HYBRID_NO_TABLE_PRIMARY:
+                return "mixed_page_text_hybrid_no_table_primary_external"
+            if document_retrieval_mode == LEGACY_TYPED_TABLE_ROW_PRIMARY:
+                return "mixed_legacy_typed_table_row_primary_external"
             return "mixed_document_external"
         return "external_web_search"
     if document_retrieval_mode:
@@ -1107,6 +1243,11 @@ def _sanitize_user_facing_text(text: str) -> str:
     cleaned = re.sub(r"\b(?:DOC|WEB)_\d+\b", "", cleaned)
     cleaned = re.sub(r"\bsource\s*=\s*[\w-]+\b", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\bscore\s*=\s*[-+]?\d*\.?\d+\b", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"(?<!\d)\s*16\s*(?=(?:日均|日均余额|余额|占比|平均余额|平均成本率|利息支出))",
+        "",
+        cleaned,
+    )
     cleaned = re.sub(
         r"(?<=[\u4e00-\u9fff])\s*16\s*(?=(?:日均余额|余额|占比|平均余额|平均成本率|利息支出))",
         "",

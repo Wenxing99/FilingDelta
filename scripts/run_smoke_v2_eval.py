@@ -26,6 +26,7 @@ from filingdelta.eval.smoke_v2 import (
 )
 from filingdelta.ingestion.pipeline import FilingIngestionPipeline
 from filingdelta.retrieval.indexer import DocumentChunkIndexer
+from filingdelta.retrieval.page_text_hybrid import evidence_units_to_page_text_chunks
 from filingdelta.retrieval.retriever import DocumentChunkRetriever
 from filingdelta.schemas.filing import EvidenceKind
 from filingdelta.services.chat_qa import (
@@ -156,6 +157,7 @@ async def _build_live_retrieval_observations(
     document_ids: dict[str, str] = {}
     documents: dict[str, Any] = {}
     document_stats: dict[str, dict[str, Any]] = {}
+    page_text_chunks_by_document_key: dict[str, list[Any]] = {}
     used_document_keys = sorted({case.document_key for case in cases})
     started_at = time.perf_counter()
     try:
@@ -176,6 +178,10 @@ async def _build_live_retrieval_observations(
             document_id = ingestion.parsed_filing.document.document_id
             document_ids[document_key] = document_id
             documents[document_key] = ingestion.parsed_filing.document
+            page_text_chunks_by_document_key[document_key] = evidence_units_to_page_text_chunks(
+                document_id=document_id,
+                evidence_units=ingestion.evidence_units,
+            )
 
             index_started = time.perf_counter()
             indexer.index_document(
@@ -225,6 +231,7 @@ async def _build_live_retrieval_observations(
                     strategy = _select_document_retrieval_strategy(
                         case.query,
                         route_decision=route_decision,
+                        chat_retrieval_strategy=settings.filingdelta_chat_retrieval_strategy,
                     )
                     retrieved_chunks, retrieval_mode = _retrieve_document_evidence(
                         retriever=retriever,
@@ -232,6 +239,7 @@ async def _build_live_retrieval_observations(
                         question=case.query,
                         callback_manager=None,
                         strategy=strategy,
+                        page_text_chunks=page_text_chunks_by_document_key.get(case.document_key, []),
                     )
                 observations[case.case_id] = _observation_from_live_result(
                     route=route_decision.route,

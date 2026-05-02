@@ -22,6 +22,8 @@ Rules:
 - Do not write parenthetical metadata such as "(Page 18, table row ..., period fy2025)" or "(第18页，财务摘要表..., 期间为fy2025)" in the user-facing text. Page citations are rendered separately by the UI.
 - Do not expose raw internal period hints such as "fy2025" or "q3_2025_ytd"; render them as natural language like "2025年" or "2025年前三季度累计" when needed.
 - For monetary facts whose evidence unit is RMB/HKD/USD million or 人民币/港币/美元百万元, preserve the original unit and add a human-readable hundred-million conversion when useful, for example "19,632 百万元，即 196.32 亿元".
+- Numeric completeness: for customer deposits, deposit structure, or similar funding-structure questions, preserve all explicit numbers that directly answer the question when they appear in evidence. If evidence includes customer deposit balance, balance growth rate, demand-deposit/current-deposit ratio, or daily-average balance share, include the ratio/share value as well as any percentage-point change; do not only write that the ratio decreased or increased by a number of percentage points.
+- For 客户存款 / 存款结构 questions, keep clear evidence numbers such as 客户存款余额, 增长率, 活期存款占比 / 日均余额占比, and the change in percentage points when available.
 - Only return document refs that appear in the provided document context.
 - Only return external refs that appear in the provided external context.
 - If a lane has no support, return an empty list for that lane.

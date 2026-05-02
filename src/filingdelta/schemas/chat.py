@@ -160,9 +160,13 @@ class ChatAnswer(BaseModel):
     retrieval_mode: Literal[
         "semantic_with_filters",
         "semantic_with_keyword_fallback",
+        "page_text_hybrid_no_table_primary",
+        "legacy_typed_table_row_primary",
         "external_web_search",
         "external_search_unavailable",
         "mixed_document_external",
+        "mixed_page_text_hybrid_no_table_primary_external",
+        "mixed_legacy_typed_table_row_primary_external",
         "unsupported",
     ] = "semantic_with_filters"
     telemetry: ChatTelemetry | None = None

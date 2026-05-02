@@ -31,7 +31,7 @@ from filingdelta.eval.smoke_v2 import (
     render_smoke_v2_markdown_summary,
     select_smoke_v2_cases,
 )
-from filingdelta.schemas.chat import RetrievedChunk
+from filingdelta.schemas.chat import ChatRouteDecision, RetrievedChunk
 
 
 def test_load_manifest_with_document_registry_and_query_schema() -> None:
@@ -1222,6 +1222,288 @@ def test_page_text_hybrid_guard_markdown_includes_u02_gold_refresh_check() -> No
     assert "weighted_rrf_best" in rendered
 
 
+def test_hybrid_strategy_alignment_distinguishes_fallback_and_override_rescue() -> None:
+    module = _load_hybrid_strategy_alignment_module()
+    case_results = [
+        _alignment_case_result(
+            query_id="FALLBACK",
+            current_hit=False,
+            fallback_hit=True,
+            override_hit=True,
+        ),
+        _alignment_case_result(
+            query_id="OVERRIDE",
+            current_hit=False,
+            fallback_hit=False,
+            override_hit=True,
+        ),
+        _alignment_case_result(
+            query_id="CURRENT",
+            current_hit=True,
+            fallback_hit=True,
+            override_hit=True,
+        ),
+    ]
+    for result in case_results:
+        result["rescue"] = module.classify_case_rescue(result["variants"])
+
+    summary = module.build_alignment_summary(
+        case_results=case_results,
+        skipped_cases=[],
+        final_top_k=6,
+    )
+
+    assert summary["variants"]["current_live_strategy"]["page_hit_count"] == 1
+    assert summary["variants"]["page_text_hybrid_fallback"]["page_hit_count"] == 2
+    assert summary["variants"]["page_text_hybrid_override"]["page_hit_count"] == 3
+    assert summary["page_text_fallback_rescue_query_ids"] == ["FALLBACK"]
+    assert summary["override_only_rescue_query_ids"] == ["OVERRIDE"]
+
+
+def test_hybrid_strategy_alignment_keeps_route_intent_and_evidence_stats_independent() -> None:
+    module = _load_hybrid_strategy_alignment_module()
+    case_results = [
+        _alignment_case_result(
+            query_id="PAGE-MISS",
+            current_hit=False,
+            fallback_hit=False,
+            override_hit=False,
+            route_hit=True,
+            intent_hit=True,
+            evidence_hit=True,
+        ),
+        _alignment_case_result(
+            query_id="ROUTE-MISS",
+            current_hit=True,
+            fallback_hit=True,
+            override_hit=True,
+            route_hit=False,
+            intent_hit=False,
+            evidence_hit=False,
+        ),
+    ]
+    for result in case_results:
+        result["rescue"] = module.classify_case_rescue(result["variants"])
+
+    summary = module.build_alignment_summary(
+        case_results=case_results,
+        skipped_cases=[],
+        final_top_k=6,
+    )
+    current = summary["variants"]["current_live_strategy"]
+
+    assert current["page_hit_count"] == 1
+    assert current["route_hit_count"] == 1
+    assert current["intent_hit_count"] == 1
+    assert current["primary_evidence_kind_hit_count"] == 1
+
+
+def test_hybrid_strategy_alignment_skips_non_document_only_manifest_cases() -> None:
+    module = _load_hybrid_strategy_alignment_module()
+    payload = _manifest_payload()
+    payload["queries"][0]["expected_route"] = "mixed"
+    manifest = load_smoke_v2_manifest_from_payload(payload, base_dir=_base_dir())
+
+    included, skipped = module.split_document_only_cases(list(manifest.queries))
+
+    assert included == []
+    assert [case["query_id"] for case in skipped] == ["CMB-DEP-01"]
+    assert skipped[0]["skip_reason"] == "manifest expected_route is not document_only"
+
+
+def test_hybrid_strategy_alignment_variant_result_does_not_modify_expected_pages() -> None:
+    module = _load_hybrid_strategy_alignment_module()
+    manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
+    case = manifest.queries[0]
+    before = list(case.expected_pages)
+
+    result = module.build_variant_result_from_candidates(
+        case=case,
+        variant="page_text_hybrid_override",
+        route_decision=ChatRouteDecision(
+            route="document_only",
+            document_evidence_intent="metric_value",
+        ),
+        candidates=[
+            RetrievalCandidate(
+                chunk=_retrieved_chunk(
+                    chunk_id="page-text",
+                    page_number=99,
+                    chunk_kind="page_text",
+                ),
+                score=1.0,
+                rank_sources=(RankSource(source="bm25", rank=1, score=1.0),),
+            )
+        ],
+        final_top_k=6,
+        retrieval_ms=0,
+        retrieval_mode="page_text_hybrid_override",
+    )
+
+    assert list(case.expected_pages) == before
+    assert result["expected_pages"] == before
+    assert result["page_hit"] is False
+
+
+def test_hybrid_strategy_alignment_markdown_shows_rescue_buckets() -> None:
+    module = _load_hybrid_strategy_alignment_module()
+    case_results = [
+        _alignment_case_result(
+            query_id="OVERRIDE",
+            current_hit=False,
+            fallback_hit=False,
+            override_hit=True,
+        )
+    ]
+    case_results[0]["rescue"] = module.classify_case_rescue(case_results[0]["variants"])
+    report = {
+        "manifest_path": "manifest.json",
+        "page_text_hybrid_config": {
+            "semantic_top_n": 5,
+            "bm25_top_n": 5,
+            "rrf_k": 20,
+            "alpha_semantic": 0.4,
+        },
+        "skipped_cases": [],
+        "cases": case_results,
+        "summary": module.build_alignment_summary(
+            case_results=case_results,
+            skipped_cases=[],
+            final_top_k=6,
+        ),
+    }
+
+    rendered = module.render_alignment_markdown(report)
+
+    assert "page_text fallback rescue" in rendered
+    assert "override-only rescue" in rendered
+    assert "OVERRIDE" in rendered
+
+
+def test_no_table_row_plan_excludes_table_row_for_all_intents() -> None:
+    module = _load_no_table_row_strategy_module()
+
+    for intent in ("metric_value", "metric_attribution", "business_narrative"):
+        plan = module.no_table_row_plan_for_intent(intent, final_top_k=6)
+        payload = plan.to_json()
+
+        assert payload["primary_chunk_kind"] != "table_row"
+        assert "table_row" not in payload["fallback_chunk_kinds"]
+        assert payload["uses_table_row"] is False
+
+
+def test_no_table_row_plan_preserves_section_text_for_narrative_intents() -> None:
+    module = _load_no_table_row_strategy_module()
+
+    attribution = module.no_table_row_plan_for_intent(
+        "metric_attribution",
+        final_top_k=6,
+    )
+    narrative = module.no_table_row_plan_for_intent(
+        "business_narrative",
+        final_top_k=6,
+    )
+
+    assert attribution.primary_chunk_kind == "section_text"
+    assert attribution.primary_top_k == 4
+    assert narrative.primary_chunk_kind == "section_text"
+    assert narrative.primary_top_k == 4
+
+
+def test_no_table_row_summary_distinguishes_current_no_table_and_override() -> None:
+    module = _load_no_table_row_strategy_module()
+    case_results = [
+        _no_table_case_result(
+            query_id="REGRESSION",
+            current_hit=True,
+            no_table_hit=False,
+            override_hit=True,
+        ),
+        _no_table_case_result(
+            query_id="RESCUE",
+            current_hit=False,
+            no_table_hit=True,
+            override_hit=True,
+        ),
+        _no_table_case_result(
+            query_id="OVERRIDE",
+            current_hit=False,
+            no_table_hit=False,
+            override_hit=True,
+        ),
+    ]
+    for result in case_results:
+        result["classification"] = module.classify_no_table_case(result["variants"])
+
+    summary = module.build_no_table_row_summary(
+        case_results=case_results,
+        skipped_cases=[],
+        final_top_k=6,
+    )
+
+    assert set(summary["variants"]) == {
+        "current_typed_strategy",
+        "no_table_row_strategy",
+        "page_text_hybrid_override",
+    }
+    assert summary["variants"]["current_typed_strategy"]["page_hit_count"] == 1
+    assert summary["variants"]["no_table_row_strategy"]["page_hit_count"] == 1
+    assert summary["variants"]["page_text_hybrid_override"]["page_hit_count"] == 3
+    assert summary["variants"]["no_table_row_strategy"][
+        "previous_passed_regression_query_ids"
+    ] == ["REGRESSION"]
+    assert summary["variants"]["no_table_row_strategy"]["rescue_query_ids"] == ["RESCUE"]
+    assert summary["variants"]["page_text_hybrid_override"][
+        "override_only_rescue_query_ids"
+    ] == ["OVERRIDE"]
+
+
+def test_no_table_row_report_preserves_expected_pages_and_risk_notes() -> None:
+    module = _load_no_table_row_strategy_module()
+    payload = _manifest_payload()
+    manifest = load_smoke_v2_manifest_from_payload(payload, base_dir=_base_dir())
+    case = manifest.queries[0]
+    before = list(case.expected_pages)
+    case_results = [
+        _no_table_case_result(
+            query_id="CMB-DEP-01",
+            current_hit=True,
+            no_table_hit=True,
+            override_hit=True,
+        )
+    ]
+    case_results[0]["classification"] = module.classify_no_table_case(
+        case_results[0]["variants"]
+    )
+    report = {
+        "manifest_path": "manifest.json",
+        "page_text_hybrid_config": {
+            "semantic_top_n": 5,
+            "bm25_top_n": 5,
+            "rrf_k": 20,
+            "alpha_semantic": 0.4,
+        },
+        "table_row_proof_point_risks": module.table_row_proof_point_risks(),
+        "skipped_cases": [],
+        "cases": case_results,
+        "summary": module.build_no_table_row_summary(
+            case_results=case_results,
+            skipped_cases=[],
+            final_top_k=6,
+        ),
+    }
+
+    rendered = module.render_no_table_row_markdown(report)
+
+    assert list(case.expected_pages) == before
+    assert "current_typed_strategy" in rendered
+    assert "no_table_row_strategy" in rendered
+    assert "page_text_hybrid_override" in rendered
+    assert "customer_deposits" in rendered
+    assert "roe_roae" in rendered
+    assert "capex_and_numeric_rows" in rendered
+
+
 @pytest.mark.parametrize("top_k", [0, -1])
 def test_report_rejects_non_positive_top_k(top_k) -> None:
     manifest = load_smoke_v2_manifest_from_payload(_manifest_payload(), base_dir=_base_dir())
@@ -1513,6 +1795,15 @@ def test_runner_rejects_non_positive_top_k(tmp_path, top_k) -> None:
         )
 
 
+def test_live_runner_passes_page_text_corpus_to_document_retrieval() -> None:
+    module = _load_run_smoke_v2_module()
+    source = Path(module.__file__).read_text(encoding="utf-8")
+
+    assert "evidence_units_to_page_text_chunks" in source
+    assert "page_text_chunks_by_document_key" in source
+    assert "page_text_chunks=page_text_chunks_by_document_key.get" in source
+
+
 def _load_run_smoke_v2_main():
     return _load_run_smoke_v2_module().main
 
@@ -1586,6 +1877,42 @@ def _load_page_text_guard_module():
     )
     spec = importlib.util.spec_from_file_location(
         "run_smoke_v2_page_text_hybrid_guard",
+        script_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_hybrid_strategy_alignment_module():
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_smoke_v2_hybrid_strategy_alignment.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "run_smoke_v2_hybrid_strategy_alignment",
+        script_path,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_no_table_row_strategy_module():
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "scripts"
+        / "run_smoke_v2_no_table_row_strategy.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "run_smoke_v2_no_table_row_strategy",
         script_path,
     )
     assert spec is not None
@@ -1697,6 +2024,112 @@ def _industry_matrix_row(
         "human_rejected_candidate_pages": [],
         "human_missing_fields": human_missing_fields or [],
         "human_review_notes": "test note",
+    }
+
+
+def _alignment_case_result(
+    *,
+    query_id: str,
+    current_hit: bool,
+    fallback_hit: bool,
+    override_hit: bool,
+    route_hit: bool = True,
+    intent_hit: bool = True,
+    evidence_hit: bool = True,
+) -> dict:
+    variants = {
+        "current_live_strategy": _alignment_variant(
+            hit=current_hit,
+            route_hit=route_hit,
+            intent_hit=intent_hit,
+            evidence_hit=evidence_hit,
+        ),
+        "page_text_hybrid_fallback": _alignment_variant(
+            hit=fallback_hit,
+            route_hit=route_hit,
+            intent_hit=intent_hit,
+            evidence_hit=evidence_hit,
+        ),
+        "page_text_hybrid_override": _alignment_variant(
+            hit=override_hit,
+            route_hit=route_hit,
+            intent_hit=intent_hit,
+            evidence_hit=False,
+        ),
+    }
+    return {
+        "id": f"doc::{query_id}",
+        "query_id": query_id,
+        "query": f"query {query_id}",
+        "expected_pages": [30],
+        "supporting_pages": [],
+        "observed_route": "document_only",
+        "observed_document_evidence_intent": "metric_value",
+        "strategy": {
+            "primary_chunk_kind": "table_row",
+            "fallback_chunk_kinds": ["page_text"],
+        },
+        "variants": variants,
+    }
+
+
+def _alignment_variant(
+    *,
+    hit: bool,
+    route_hit: bool,
+    intent_hit: bool,
+    evidence_hit: bool,
+) -> dict:
+    return {
+        "route_hit": route_hit,
+        "intent_hit": intent_hit,
+        "primary_evidence_kind_hit": evidence_hit,
+        "page_hit": hit,
+        "supporting_hit": False,
+        "page_match_status": "primary_hit" if hit else "miss",
+        "retrieved_pages": [30] if hit else [99],
+    }
+
+
+def _no_table_case_result(
+    *,
+    query_id: str,
+    current_hit: bool,
+    no_table_hit: bool,
+    override_hit: bool,
+) -> dict:
+    return {
+        "id": f"doc::{query_id}",
+        "query_id": query_id,
+        "query": f"query {query_id}",
+        "expected_pages": [30],
+        "supporting_pages": [],
+        "observed_route": "document_only",
+        "observed_document_evidence_intent": "metric_value",
+        "no_table_row_plan": {
+            "primary_chunk_kind": None,
+            "fallback_chunk_kinds": ["page_text"],
+        },
+        "variants": {
+            "current_typed_strategy": _alignment_variant(
+                hit=current_hit,
+                route_hit=True,
+                intent_hit=True,
+                evidence_hit=True,
+            ),
+            "no_table_row_strategy": _alignment_variant(
+                hit=no_table_hit,
+                route_hit=True,
+                intent_hit=True,
+                evidence_hit=False,
+            ),
+            "page_text_hybrid_override": _alignment_variant(
+                hit=override_hit,
+                route_hit=True,
+                intent_hit=True,
+                evidence_hit=False,
+            ),
+        },
     }
 
 

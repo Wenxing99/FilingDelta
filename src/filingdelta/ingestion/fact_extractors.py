@@ -57,6 +57,8 @@ class StructuredFactExtractor:
             unit_pages=_format_pages(selection.pages_for("unit")),
             revenue_pages=_format_pages(selection.pages_for("revenue")),
             net_profit_pages=_format_pages(selection.pages_for("net_profit")),
+            total_assets_pages=_format_pages(selection.pages_for("total_assets")),
+            total_liabilities_pages=_format_pages(selection.pages_for("total_liabilities")),
             roe_pages=_format_pages(selection.pages_for("roe")),
             page_context=page_context,
         )
@@ -77,6 +79,8 @@ class StructuredFactExtractor:
             unit=_build_structured_fact_field(structured.unit),
             revenue=_build_structured_fact_field(structured.revenue),
             net_profit=_build_structured_fact_field(structured.net_profit),
+            total_assets=_build_structured_fact_field(structured.total_assets),
+            total_liabilities=_build_structured_fact_field(structured.total_liabilities),
             roe=_build_structured_fact_field(structured.roe),
         )
 
@@ -148,6 +152,18 @@ class LlamaExtractFactExtractor:
                 source_path=parsed_filing.document.source_path,
                 value=extracted.data.net_profit,
                 metadata=extracted.field_metadata.get("net_profit"),
+            ),
+            total_assets=_build_fact_field(
+                document_id=document_id,
+                source_path=parsed_filing.document.source_path,
+                value=extracted.data.total_assets,
+                metadata=extracted.field_metadata.get("total_assets"),
+            ),
+            total_liabilities=_build_fact_field(
+                document_id=document_id,
+                source_path=parsed_filing.document.source_path,
+                value=extracted.data.total_liabilities,
+                metadata=extracted.field_metadata.get("total_liabilities"),
             ),
             roe=_build_fact_field(
                 document_id=document_id,
@@ -282,7 +298,7 @@ def _merge_table_metrics(
     if table_metrics.unit.value:
         structured.unit = table_metrics.unit
 
-    for field_name in ("revenue", "net_profit", "roe"):
+    for field_name in ("revenue", "net_profit", "total_assets", "total_liabilities", "roe"):
         table_field = getattr(table_metrics, field_name)
         if table_field.value is not None:
             setattr(structured, field_name, table_field)

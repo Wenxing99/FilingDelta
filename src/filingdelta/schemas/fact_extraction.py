@@ -25,6 +25,8 @@ class HeadlineMetricsStructuredExtraction(BaseModel):
     unit: TextFactEvidence = Field(default_factory=TextFactEvidence)
     revenue: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
     net_profit: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
+    total_assets: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
+    total_liabilities: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
     roe: NumericFactEvidence = Field(default_factory=NumericFactEvidence)
 
 

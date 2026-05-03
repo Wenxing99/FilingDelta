@@ -20,6 +20,8 @@ _HEADLINE_FACT_FIELDS = (
     "unit",
     "revenue",
     "net_profit",
+    "total_assets",
+    "total_liabilities",
     "roe",
 )
 
@@ -233,6 +235,8 @@ def _iter_pages_for_field(parsed_filing: ParsedFiling, field_name: str) -> Itera
         "unit": 6,
         "revenue": 8,
         "net_profit": 8,
+        "total_assets": 12,
+        "total_liabilities": 12,
         "roe": 8,
     }.get(field_name, 0)
 

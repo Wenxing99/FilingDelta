@@ -12,6 +12,8 @@ _FIELD_NAMES = (
     "unit",
     "revenue",
     "net_profit",
+    "total_assets",
+    "total_liabilities",
     "roe",
 )
 
@@ -21,6 +23,8 @@ _FRONT_PAGE_PRIORITIES = {
     "unit": 4,
     "revenue": 2,
     "net_profit": 2,
+    "total_assets": 2,
+    "total_liabilities": 2,
     "roe": 2,
 }
 
@@ -92,6 +96,24 @@ _FIELD_KEYWORDS = {
         "應佔盈利",
         "本公司权益持有人应占",
         "本公司權益持有人應佔",
+    ),
+    "total_assets": (
+        "total assets",
+        "statement of financial position",
+        "balance sheet",
+        "总资产",
+        "總資產",
+        "资产总计",
+        "資產總計",
+    ),
+    "total_liabilities": (
+        "total liabilities",
+        "statement of financial position",
+        "balance sheet",
+        "总负债",
+        "總負債",
+        "负债合计",
+        "負債合計",
     ),
     "roe": (
         "return on equity",

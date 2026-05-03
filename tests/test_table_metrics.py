@@ -272,6 +272,69 @@ def test_table_metrics_binds_annual_values_to_target_year_when_years_ascend() ->
     assert result.roe.value is None
 
 
+def test_table_metrics_extracts_explicit_total_assets_and_liabilities_rows() -> None:
+    parsed = _parsed_filing(
+        """
+        Financial highlights
+        RMB million
+        2025
+        2024
+        Total assets
+        1,200
+        1,000
+        Total liabilities
+        700
+        600
+        """,
+        doc_type=FilingDocType.ANNUAL_REPORT,
+    )
+
+    result = extract_table_headline_metrics(
+        source=_source(
+            doc_type=FilingDocType.ANNUAL_REPORT,
+            fiscal_period="2025 annual report",
+        ),
+        parsed_filing=parsed,
+        selection=_Selection([1]),
+    ).structured
+
+    assert result.total_assets.value == 1_200
+    assert result.total_assets.evidence_page == 1
+    assert result.total_liabilities.value == 700
+    assert result.total_liabilities.evidence_page == 1
+    assert result.unit.value == "RMB million"
+
+
+def test_table_metrics_does_not_derive_total_liabilities_from_assets_or_equity() -> None:
+    parsed = _parsed_filing(
+        """
+        Balance sheet
+        RMB million
+        2025
+        Total assets
+        1,200
+        Total equity
+        500
+        Total liabilities and equity
+        1,200
+        """,
+        doc_type=FilingDocType.ANNUAL_REPORT,
+    )
+
+    result = extract_table_headline_metrics(
+        source=_source(
+            doc_type=FilingDocType.ANNUAL_REPORT,
+            fiscal_period="2025 annual report",
+        ),
+        parsed_filing=parsed,
+        selection=_Selection([1]),
+    ).structured
+
+    assert result.total_assets.value == 1_200
+    assert result.total_liabilities.value is None
+    assert result.roe.value is None
+
+
 def _source(
     *,
     company_name: str = "招商银行股份有限公司",

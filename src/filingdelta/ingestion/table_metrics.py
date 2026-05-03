@@ -15,7 +15,8 @@ from filingdelta.schemas.fact_extraction import (
 from filingdelta.schemas.filing import FilingDocType, FilingSource, ParsedFiling, ParsedPage
 
 
-_METRIC_FIELDS = ("revenue", "net_profit", "roe")
+_METRIC_FIELDS = ("revenue", "net_profit", "total_assets", "total_liabilities", "roe")
+_BALANCE_SHEET_FIELDS = {"total_assets", "total_liabilities"}
 
 _TABLE_CONTEXT_KEYWORDS = (
     "主要会计数据",
@@ -36,6 +37,13 @@ _TABLE_CONTEXT_KEYWORDS = (
     "financial summary",
     "selected financial",
     "management discussion",
+    "balance sheet",
+    "statement of financial position",
+    "statements of financial position",
+    "资产负债表",
+    "資產負債表",
+    "财务状况表",
+    "財務狀況表",
 )
 
 _UNIT_PATTERNS = (
@@ -141,7 +149,14 @@ def _candidate_pages(parsed_filing: ParsedFiling, selection: object) -> list[int
 
     pages_for = getattr(selection, "pages_for", None)
     if callable(pages_for):
-        for field_name in ("revenue", "net_profit", "roe", "unit"):
+        for field_name in (
+            "revenue",
+            "net_profit",
+            "total_assets",
+            "total_liabilities",
+            "roe",
+            "unit",
+        ):
             pages.extend(int(page_number) for page_number in pages_for(field_name))
 
     scored_pages: list[tuple[int, int]] = []
@@ -167,6 +182,32 @@ def _score_table_page(page: ParsedPage) -> int:
     for keyword in ("营业收入", "營業收入", "归属于", "歸屬於", "净资产收益率", "淨資產收益率", "ROE", "ROAE"):
         if _normalize_for_match(keyword) in text:
             score += 2
+    if _label_contains_any_variant(
+        text,
+        (
+            "总资产",
+            "總資產",
+            "资产总计",
+            "資產總計",
+            "总负债",
+            "總負債",
+            "负债合计",
+            "負債合計",
+            "资产负债表",
+            "資產負債表",
+        ),
+    ):
+        score += 4
+    if any(
+        token in text
+        for token in (
+            "totalassets",
+            "totalliabilities",
+            "balancesheet",
+            "statementoffinancialposition",
+        )
+    ):
+        score += 4
     return score
 
 
@@ -189,7 +230,7 @@ def _extract_line_table_candidates(
 
     for index, _line in enumerate(lines):
         for field_name in _METRIC_FIELDS:
-            if _should_skip_metric_context(source, lines, index):
+            if _should_skip_metric_context(source, lines, index, field_name):
                 continue
             label_match = _match_metric_label(lines, index, field_name)
             if label_match is None:
@@ -403,6 +444,49 @@ def _score_metric_label(field_name: str, label: str) -> int:
             return 78
         if "profitattributable" in normalized or "netincomeattributable" in normalized:
             return 70
+        return 0
+
+    if field_name == "total_assets":
+        if _label_contains_any_variant(
+            normalized,
+            (
+                "总资产",
+                "總資產",
+                "资产总计",
+                "資產總計",
+                "资产合计",
+                "資產合計",
+            ),
+        ):
+            return 78
+        if any(token in normalized for token in ("totalassets", "assetstotal")):
+            return 78
+        return 0
+
+    if field_name == "total_liabilities":
+        if any(
+            token in normalized
+            for token in (
+                "totalliabilitiesandequity",
+                "totalliabilitiesandshareholdersequity",
+                "liabilitiesandequity",
+            )
+        ):
+            return 0
+        if _label_contains_any_variant(
+            normalized,
+            (
+                "总负债",
+                "總負債",
+                "负债合计",
+                "負債合計",
+                "负债总计",
+                "負債總計",
+            ),
+        ):
+            return 78
+        if any(token in normalized for token in ("totalliabilities", "liabilitiestotal")):
+            return 78
         return 0
 
     if field_name == "roe":
@@ -619,7 +703,7 @@ def _is_interim_context(source: FilingSource, context_lines: list[str]) -> bool:
 def _value_is_compatible(field_name: str, value: float) -> bool:
     if field_name == "roe":
         return 0 < value < 100
-    if field_name in {"revenue", "net_profit"}:
+    if field_name in {"revenue", "net_profit", "total_assets", "total_liabilities"}:
         return abs(value) >= 1
     return True
 
@@ -664,6 +748,7 @@ def _should_skip_metric_context(
     source: FilingSource,
     lines: list[str],
     label_index: int,
+    field_name: str,
 ) -> bool:
     context = _normalize_for_match(" ".join(lines[max(0, label_index - 60) : label_index + 1]))
     if source.doc_type == FilingDocType.ANNUAL_REPORT and any(
@@ -679,6 +764,17 @@ def _should_skip_metric_context(
         )
     ):
         return True
+
+    if field_name in _BALANCE_SHEET_FIELDS and any(
+        token in context
+        for token in (
+            "èµ„äº§è´Ÿå€ºè¡¨",
+            "è³‡ç”¢è² å‚µè¡¨",
+            "balancesheet",
+            "statementoffinancialposition",
+        )
+    ):
+        return False
 
     if any(
         token in context
@@ -909,6 +1005,23 @@ def _normalize_for_match(text: str) -> str:
     normalized = normalized.lower()
     normalized = re.sub(r"[,\.;:，。；：()\[\]{}<>％%/\\\-—_]", "", normalized)
     return normalized
+
+
+def _label_contains_any_variant(normalized_label: str, labels: tuple[str, ...]) -> bool:
+    return any(
+        _normalize_for_match(variant) in normalized_label
+        for label in labels
+        for variant in _label_variants(label)
+    )
+
+
+def _label_variants(label: str) -> tuple[str, ...]:
+    variants = [label]
+    try:
+        variants.append(label.encode("utf-8").decode("cp1252", errors="ignore"))
+    except UnicodeError:
+        pass
+    return tuple(_dedupe_preserve_order(variants))
 
 
 def _dedupe_preserve_order(items: list[str] | list[int]) -> list:

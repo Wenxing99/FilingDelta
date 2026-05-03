@@ -367,7 +367,16 @@ def _recalculate_review_state(result: SingleFilingWorkflowResult) -> None:
             else:
                 verified_count += 1
 
-    for field_name in ("company_name", "fiscal_period", "unit", "revenue", "net_profit", "roe"):
+    for field_name in (
+        "company_name",
+        "fiscal_period",
+        "unit",
+        "revenue",
+        "net_profit",
+        "total_assets",
+        "total_liabilities",
+        "roe",
+    ):
         field = getattr(result.headline_metrics, field_name)
         if field.value is None:
             continue
@@ -524,7 +533,16 @@ def _point_depends_on_changed_facts(section_title: str, text: str, changed_field
 
 def _changed_fact_fields(previous: HeadlineMetricFacts, current: HeadlineMetricFacts) -> set[str]:
     changed: set[str] = set()
-    for field_name in ("company_name", "fiscal_period", "unit", "revenue", "net_profit", "roe"):
+    for field_name in (
+        "company_name",
+        "fiscal_period",
+        "unit",
+        "revenue",
+        "net_profit",
+        "total_assets",
+        "total_liabilities",
+        "roe",
+    ):
         previous_field = getattr(previous, field_name)
         current_field = getattr(current, field_name)
         if (
@@ -580,7 +598,18 @@ _FACT_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 _FACT_KEYWORDS["roe"] = ("净资产收益率", "加权平均净资产收益率", "return on equity", "roe")
 
-_FACT_RELEVANT_FIELDS = {"revenue", "net_profit", "roe", "unit", "fiscal_period"}
+_FACT_KEYWORDS["total_assets"] = ("total assets",)
+_FACT_KEYWORDS["total_liabilities"] = ("total liabilities",)
+
+_FACT_RELEVANT_FIELDS = {
+    "revenue",
+    "net_profit",
+    "total_assets",
+    "total_liabilities",
+    "roe",
+    "unit",
+    "fiscal_period",
+}
 
 
 def _preserve_non_numeric_summary_and_non_fact_issues(issues: list[VerificationIssue]) -> list[VerificationIssue]:

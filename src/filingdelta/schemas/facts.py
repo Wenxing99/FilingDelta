@@ -43,6 +43,20 @@ class HeadlineMetricsExtractionSchema(BaseModel):
             "profit line. Extract the numeric value only, without commas or unit text."
         ),
     )
+    total_assets: float | None = Field(
+        default=None,
+        description=(
+            "Total assets at the reporting period end. Extract only when an explicit total "
+            "assets row or label is present. Do not infer or calculate this value."
+        ),
+    )
+    total_liabilities: float | None = Field(
+        default=None,
+        description=(
+            "Total liabilities at the reporting period end. Extract only when an explicit "
+            "total liabilities row or label is present. Do not infer or calculate this value."
+        ),
+    )
     roe: float | None = Field(
         default=None,
         description=(
@@ -72,4 +86,6 @@ class HeadlineMetricFacts(BaseModel):
     unit: ExtractedFactField = Field(default_factory=ExtractedFactField)
     revenue: ExtractedFactField = Field(default_factory=ExtractedFactField)
     net_profit: ExtractedFactField = Field(default_factory=ExtractedFactField)
+    total_assets: ExtractedFactField = Field(default_factory=ExtractedFactField)
+    total_liabilities: ExtractedFactField = Field(default_factory=ExtractedFactField)
     roe: ExtractedFactField = Field(default_factory=ExtractedFactField)

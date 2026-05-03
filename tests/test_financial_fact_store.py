@@ -7,6 +7,7 @@ from types import ModuleType
 
 from filingdelta.financial_facts import (
     CANONICAL_METRICS,
+    FinancialFactsQueryService,
     SQLiteFinancialFactStore,
     canonicalize_metric_id,
     convert_headline_metric_facts,
@@ -521,6 +522,57 @@ def test_top_metric_by_year_can_limit_to_selected_documents(tmp_path: Path) -> N
     assert stats["selected_docs"] == 2
     assert stats["candidate_count"] == 2
     assert stats["returned_rows"] == 2
+
+
+def test_query_service_checks_unit_comparability_before_limit(tmp_path: Path) -> None:
+    db_path = tmp_path / "facts.sqlite"
+    store = SQLiteFinancialFactStore(db_path)
+    store.upsert_facts(
+        [
+            _fact("doc-a", "A", 300, fiscal_period="2025 annual report"),
+            _fact("doc-b", "B", 200, fiscal_period="2025 annual report").model_copy(
+                update={"currency": "HKD", "normalized_unit": "HKD"}
+            ),
+            _fact("doc-c", "C", 100, fiscal_period="2025 annual report"),
+        ]
+    )
+
+    result = FinancialFactsQueryService(db_path).top_metric_by_year(
+        metric_id="revenue",
+        fiscal_year=2025,
+        limit=1,
+    )
+
+    assert result.status == "unsupported"
+    assert result.summary.after_company_dedupe == 3
+    assert any("incomparable_normalized_units" in note for note in result.notes)
+
+
+def test_query_service_missing_db_is_unavailable_without_creating_file(tmp_path: Path) -> None:
+    db_path = tmp_path / "missing" / "facts.sqlite"
+
+    result = FinancialFactsQueryService(db_path).top_metric_by_year(
+        metric_id="revenue",
+        fiscal_year=2025,
+        limit=3,
+    )
+
+    assert result.status == "unavailable"
+    assert not db_path.exists()
+
+
+def test_query_service_missing_table_is_unavailable(tmp_path: Path) -> None:
+    db_path = tmp_path / "empty.sqlite"
+    db_path.write_bytes(b"")
+
+    result = FinancialFactsQueryService(db_path).top_metric_by_year(
+        metric_id="revenue",
+        fiscal_year=2025,
+        limit=3,
+    )
+
+    assert result.status == "unavailable"
+    assert "financial_facts_table_missing" in result.notes
 
 
 def test_query_script_reconfigures_stdout_for_readable_chinese_json(

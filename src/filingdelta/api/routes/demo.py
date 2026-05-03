@@ -27,9 +27,11 @@ from filingdelta.services.demo_documents import (
 )
 from filingdelta.services.chat_qa import get_chat_qa_service
 from filingdelta.services.demo_runs import get_demo_run_manager
+from filingdelta.services.kb_financial_facts import KbFinancialFactsChatService
 
 
 router = APIRouter(prefix="/api/demo", tags=["demo"])
+_kb_financial_facts_chat_service = KbFinancialFactsChatService()
 
 
 @router.get("/documents", response_model=DemoDocumentListResponse)
@@ -128,12 +130,16 @@ async def rerun_demo_run_feedback(run_id: str, payload: DemoRunFeedbackActionReq
 async def demo_chat(payload: DemoChatRequest) -> DemoChatResponse:
     try:
         source = get_demo_document_source(payload.document_id)
-        service = get_chat_qa_service()
     except KeyError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
+    kb_answer = _answer_kb_financial_fact_rank(payload)
+    if kb_answer is not None:
+        return DemoChatResponse(response=kb_answer)
+
+    service = get_chat_qa_service()
     try:
         response = await service.ask(
             document_id=payload.document_id,
@@ -150,15 +156,60 @@ async def demo_chat(payload: DemoChatRequest) -> DemoChatResponse:
 async def demo_chat_stream(payload: DemoChatRequest) -> StreamingResponse:
     try:
         source = get_demo_document_source(payload.document_id)
-        service = get_chat_qa_service()
     except KeyError as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
+    kb_answer = _answer_kb_financial_fact_rank(payload)
+    if kb_answer is not None:
+        return StreamingResponse(
+            _stream_static_chat_answer(kb_answer),
+            media_type="application/x-ndjson",
+        )
+
+    service = get_chat_qa_service()
     return StreamingResponse(
         _stream_demo_chat(payload=payload, source=source, service=service),
         media_type="application/x-ndjson",
+    )
+
+
+def _answer_kb_financial_fact_rank(payload: DemoChatRequest):
+    return _kb_financial_facts_chat_service.answer_if_supported(
+        document_id=payload.document_id,
+        session_id=payload.session_id,
+        question=payload.question,
+    )
+
+
+async def _stream_static_chat_answer(answer) -> AsyncIterator[str]:
+    yield _encode_stream_event(
+        {
+            "type": "status",
+            "stage": "financial_facts",
+            "message": "正在查询结构化事实库...",
+        }
+    )
+    for chunk in _iter_text_deltas(answer.answer):
+        yield _encode_stream_event(
+            {
+                "type": "delta",
+                "text": chunk,
+            }
+        )
+        await asyncio.sleep(0.01)
+    yield _encode_stream_event(
+        {
+            "type": "citations",
+            "citations": [],
+        }
+    )
+    yield _encode_stream_event(
+        {
+            "type": "done",
+            "response": answer.model_dump(mode="json"),
+        }
     )
 
 

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
 from pathlib import Path
-import sys
 from types import ModuleType
 
 import pytest
@@ -322,16 +321,7 @@ def test_backfill_report_counts_missing_metrics_not_as_success(
 
 
 def _load_backfill_module() -> ModuleType:
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / (
-        "backfill_financial_facts_from_raw.py"
-    )
-    spec = importlib.util.spec_from_file_location("backfill_financial_facts_from_raw", script_path)
-    assert spec is not None
-    assert spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("filingdelta.financial_facts.backfill")
 
 
 def _write_registry(path: Path, documents: list[dict[str, object]]) -> None:

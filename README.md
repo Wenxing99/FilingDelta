@@ -81,6 +81,10 @@ FilingDelta 第一版最重要的能力是：
   - 已有离线 runner / schema 覆盖 route、intent、evidence kind、page hit 和输出卫生口径
   - 当前 BM25/RRF shadow 结论只证明 retrieval page-hit 改善，不代表最终 answer synthesis 通过
   - 默认文档 QA 检索已转向 `page_text` BM25/RRF hybrid + `section_text` typed retrieval；legacy table-row primary 仅作为配置回退
+- 最小结构化事实层：
+  - 已有 `financial_facts` SQLite seed / backfill / query 脚本
+  - v1D 覆盖 `revenue`、`net_profit_attributable`、`total_assets`、`total_liabilities`
+  - 当前仍是本地 seed，不是完整多公司 KB、自动 UI 入库或生产级财务数据库
 
 当前 demo 以**单文档可追溯阅读**为主；双文档 `Compare / diff` 能力仍在下一阶段推进。
 

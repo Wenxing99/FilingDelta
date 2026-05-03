@@ -351,6 +351,9 @@ export function ChatPanel({ document, onSelectCitation }: ChatPanelProps) {
     if (mode === "mixed_legacy_typed_table_row_primary_external") {
       return "Mixed QA + 旧版表格优先";
     }
+    if (mode === "kb_financial_facts") {
+      return "结构化事实库";
+    }
     if (mode === "semantic_with_keyword_fallback") {
       return "关键词回退";
     }

@@ -167,6 +167,7 @@ class ChatAnswer(BaseModel):
         "mixed_document_external",
         "mixed_page_text_hybrid_no_table_primary_external",
         "mixed_legacy_typed_table_row_primary_external",
+        "kb_financial_facts",
         "unsupported",
     ] = "semantic_with_filters"
     telemetry: ChatTelemetry | None = None

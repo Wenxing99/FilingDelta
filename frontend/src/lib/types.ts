@@ -231,6 +231,7 @@ export type ChatResponse = {
     | "mixed_document_external"
     | "mixed_page_text_hybrid_no_table_primary_external"
     | "mixed_legacy_typed_table_row_primary_external"
+    | "kb_financial_facts"
     | "unsupported";
   telemetry: ChatTelemetry | null;
 };

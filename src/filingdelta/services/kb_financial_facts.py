@@ -245,8 +245,12 @@ def _format_normalized_value(value: float | None, normalized_unit: str | None) -
 
 def _format_fact_source(fact) -> str:
     page = f"第 {fact.evidence_page} 页" if fact.evidence_page is not None else "页码缺失"
-    quote = fact.evidence_quote.replace("|", "\\|").strip()
+    quote = _format_evidence_quote(fact.evidence_quote)
     return f"{fact.document_id}，{page}：“{quote}”"
+
+
+def _format_evidence_quote(quote: str) -> str:
+    return re.sub(r"\s+", " ", quote.strip()).replace("|", "\\|")
 
 
 def _looks_like_metric_rank_question(normalized: str, *, metric_id: str | None) -> bool:

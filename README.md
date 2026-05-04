@@ -82,9 +82,10 @@ FilingDelta 第一版最重要的能力是：
   - 当前 BM25/RRF shadow 结论只证明 retrieval page-hit 改善，不代表最终 answer synthesis 通过
   - 默认文档 QA 检索已转向 `page_text` BM25/RRF hybrid + `section_text` typed retrieval；legacy table-row primary 仅作为配置回退
 - 最小结构化事实层：
-  - 已有 `financial_facts` SQLite seed / backfill / query 脚本
-  - v1D 覆盖 `revenue`、`net_profit_attributable`、`total_assets`、`total_liabilities`
-  - 当前仍是本地 seed，不是完整多公司 KB、自动 UI 入库或生产级财务数据库
+  - 已有 `financial_facts` SQLite store、registry-driven backfill 和 query 脚本
+  - 当前支持从 raw registry 筛选 eligible annual reports，抽取 `revenue`、`net_profit_attributable`、`total_assets`、`total_liabilities`
+  - Ask Filing 已接入 deterministic current-KB TopK route，用结构化 facts 回答 2025 年跨公司财务排名问题
+  - 当前仍是本地 SQLite KB snapshot，不是完整多公司 KB lifecycle、自动 UI 入库、Qdrant 跨文档搜索或生产级财务数据库
 
 当前 demo 以**单文档可追溯阅读**为主；双文档 `Compare / diff` 能力仍在下一阶段推进。
 

@@ -87,6 +87,21 @@ def test_parse_kb_metric_rank_question_rejects_unsupported_year_without_rag_fall
     assert "2025" in parsed.unsupported_reason
 
 
+def test_kb_financial_facts_unsupported_year_returns_no_rag_fallback(tmp_path: Path) -> None:
+    service = KbFinancialFactsChatService(FinancialFactsQueryService(tmp_path / "missing.sqlite"))
+
+    answer = service.answer_if_supported(
+        document_id="ui-doc",
+        session_id="session",
+        question="2024年哪三家公司营业收入Top3？",
+    )
+
+    assert answer is not None
+    assert answer.route == "unsupported"
+    assert answer.retrieval_mode == "kb_financial_facts"
+    assert answer.citations == []
+
+
 def test_kb_financial_facts_answer_has_no_clickable_citations(tmp_path: Path) -> None:
     db_path = tmp_path / "facts.sqlite"
     store = SQLiteFinancialFactStore(db_path)
@@ -111,6 +126,29 @@ def test_kb_financial_facts_answer_has_no_clickable_citations(tmp_path: Path) ->
     assert answer.citations == []
     assert "doc-a" in answer.answer
     assert "第 8 页" in answer.answer
+
+
+def test_kb_financial_facts_answer_formats_quote_for_markdown_table(tmp_path: Path) -> None:
+    db_path = tmp_path / "facts.sqlite"
+    store = SQLiteFinancialFactStore(db_path)
+    store.upsert_facts(
+        [
+            _fact("doc-a", "A", 300, evidence_quote="資產總額\n2,038,986"),
+            _fact("doc-b", "B", 200, evidence_quote="收入 | 成本"),
+        ]
+    )
+    service = KbFinancialFactsChatService(FinancialFactsQueryService(db_path))
+
+    answer = service.answer_if_supported(
+        document_id="ui-doc",
+        session_id="session",
+        question="2025 revenue Top2 in current KB",
+    )
+
+    assert answer is not None
+    assert "資產總額 2,038,986" in answer.answer
+    assert "資產總額\n2,038,986" not in answer.answer
+    assert "收入 \\| 成本" in answer.answer
 
 
 def test_kb_financial_facts_unsupported_question_returns_answer_not_none(tmp_path: Path) -> None:
@@ -139,7 +177,13 @@ def test_kb_financial_facts_non_rank_question_is_not_intercepted(tmp_path: Path)
     assert answer is None
 
 
-def _fact(document_id: str, company_name: str, normalized_value: float) -> FinancialFact:
+def _fact(
+    document_id: str,
+    company_name: str,
+    normalized_value: float,
+    *,
+    evidence_quote: str = "营业收入 100",
+) -> FinancialFact:
     return FinancialFact(
         fact_id=f"{document_id}:revenue",
         document_id=document_id,
@@ -158,6 +202,6 @@ def _fact(document_id: str, company_name: str, normalized_value: float) -> Finan
         normalized_value=normalized_value,
         normalized_unit="CNY",
         evidence_page=8,
-        evidence_quote="营业收入 100",
+        evidence_quote=evidence_quote,
         review_status="verified",
     )

@@ -23,11 +23,9 @@ As of the current implementation:
   - `metric_attribution`
   - `business_narrative`
   - `fallback`
-- `ChatQAService` maps intent to retrieval strategy:
-  - `metric_value` -> `table_row` first, with `page_text` fallback included.
-  - `metric_attribution` -> `section_text` first, then `table_row`, then `page_text`.
-  - `business_narrative` -> `section_text` first, then `page_text`.
-  - `fallback` -> current page-level behavior.
+- Current status note as of 2026-05-02: this document's `primary_evidence_kind=table_row` labels are golden/evidence taxonomy labels for exact numeric or table-like disclosure. They are not the current default ChatQA retrieval strategy.
+- Current default `ChatQAService` document retrieval uses `page_text` BM25/RRF hybrid plus `section_text` for attribution and narrative questions. Heuristic `table_row primary` remains only as a legacy/config fallback.
+- 2026-05-04 status: Ask Filing has a deterministic `kb_financial_facts` pre-route v1 for explicit 2025 TopK queries over 4 verified metrics in the current SQLite KB. This is outside the golden/evidence manifest; do not expand golden pages or manifest scope because of this route.
 
 Existing eval coverage is useful but narrow:
 
@@ -176,7 +174,7 @@ Metric mapping:
 
 ## v2 Suite Shape
 
-Use three tiers:
+Historical design target, not the current next implementation step:
 
 | Tier | Size | Purpose |
 |---|---:|---|
@@ -184,7 +182,7 @@ Use three tiers:
 | `core_v2` | 60-90 queries | broader industry coverage across 10-12 business models |
 | `future_v2` | open-ended | note-heavy, derived, cross-company, external-data, or deep accounting cases |
 
-For the next implementation step, start with `smoke_v2`.
+Current status: the active minimum guard is the existing 20-case anchor-confirmed smoke set. Do not expand `smoke_v2`, `core_v2`, or `future_v2` unless the user explicitly assigns that work.
 
 ## Universal Query Templates
 
@@ -333,15 +331,16 @@ Before turning this design into JSON and runner code, require:
 - U-01 / U-02 已按用户确认扩展 gold 页码；U-04 的 primary gold 页是 `76, 77`，`81` 只是 partial supporting page，`57` 已删除。
 - BYD raw 已替换为完整年报，`NEV-01` 已迁到新 document key：`比亚迪_2025_annual_report-7906b664`，人工确认页码仍为 `25`。
 - 14 条行业专项页码已由用户再次复核通过；6 条 Universal 页码也已确认并进入 20-case manifest 草案。
-- 14 条 live retrieval pilot 的历史结果为 `6 passed / 8 failed`。BM25 / hybrid retrieval diagnosis 仍只是 page-hit-only 对照实验，不是正式系统接入。
+- 14 条 live retrieval pilot 的历史结果为 `6 passed / 8 failed`，后续 20-case pilot 已经作为当前最小回归集使用。
 - failure probe 已把已知失败归因为四类：router intent mismatch、table extraction gap、rank/rerank issue、generic metric row dominance。
-- PageText BM25/RRF shadow、coarse grid 与 no-regression guard 仍是离线 eval tooling，尚未接入正式 `ChatQAService` 或 production retrieval。gold refresh 后的当前真实结论是：最佳 page_text weighted RRF/guard 口径为 `19/20` full primary page hit，另有 `U-04` partial support-only hit；这不是 QA 终局通过，也不是答案合成质量结论。
+- PageText BM25/RRF shadow、coarse grid 与 no-regression guard 已推动正式 `ChatQAService` 默认检索切到 `page_text` hybrid + `section_text`。gold refresh 后的 eval 结论仍只代表 page-hit / retrieval 证据，不代表 QA 终局通过；`U-04` 仍应按 partial support-only 记录。
+- Ask Filing `kb_financial_facts` pre-route v1 已完成，用于显式 2025 年、4 个 verified metrics 的 current SQLite KB TopK；unsupported ranking query 不 fallback RAG。它不是 golden queries v2 manifest 的扩容理由。
 
 ## Next Implementation Step
 
 下一步不要继续扩 manifest，也不要继续改 gold。eval-building 已经足够支撑主线验证，后续按最小工程切片回到主线能力：
 
 1. 如需验证当前 eval set，先单独批准并运行 20 条 live retrieval pilot；不要在 manifest 生成步骤里自动跑 live retrieval。
-2. 先收口 `HA-03` router intent 判别问题，再观察 20 条 pilot 中 intent/page-hit 的变化。
-3. 再选择 table extraction / retrieval 排序的最小失败簇修复，例如 `HYDRO-01`、`BABA-01` 或 BYD/Universal 中暴露的表格证据问题。
-4. 在上述切片通过之前，不要把 BM25/hybrid 接入正式 `ChatQAService`，也不要进入 full answer-quality benchmark。
+2. 不要继续扩 manifest、改 gold 或围绕单个 case 做 prompt/retrieval patch。
+3. 当前主线已经转向 `financial_facts` / KB fact layer；current-KB TopK pre-route v1 已完成，后续重点是 ingestion lifecycle、coverage 和 facts + retrieval context，而不是继续扩大 heuristic `table_row`。
+4. 后续 retrieval 改动仍应使用 20-case smoke set 和 chat quality smoke 做回归，不要把 page-hit 结果写成 answer synthesis 质量结论。

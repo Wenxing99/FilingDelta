@@ -72,7 +72,11 @@ def test_backfill_dry_run_selects_exact_allowlist_and_has_no_execute_cost(
     )
 
     assert report["mode"] == "dry_run"
+    assert report["selection_mode"] == "explicit_allowlist"
     assert report["selected_document_keys"] == [selected_key]
+    assert report["selected_by_fiscal_year"] == {"2025": 1}
+    assert report["topk_fiscal_year"] == 2025
+    assert report["selected_docs_for_topk_year"] == [selected_key]
     assert report["skipped_reasons"] == {
         "checksum_mismatch": 1,
         "hard_exclusion_terms": 2,
@@ -83,13 +87,108 @@ def test_backfill_dry_run_selects_exact_allowlist_and_has_no_execute_cost(
     assert report_path.exists()
 
 
-def test_backfill_requires_explicit_allowlist_choice(tmp_path: Path) -> None:
+def test_backfill_selects_all_eligible_annual_reports_from_registry(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backfill = _load_backfill_module()
+    selected_2025 = tmp_path / "selected-2025.pdf"
+    selected_2024 = tmp_path / "selected-2024.pdf"
+    summary_file = tmp_path / "annual-summary.pdf"
+    quarter_file = tmp_path / "q3-quarterly.pdf"
+    interim_file = tmp_path / "interim.pdf"
+    mismatch_file = tmp_path / "mismatch.pdf"
+    for path in (
+        selected_2025,
+        selected_2024,
+        summary_file,
+        quarter_file,
+        interim_file,
+        mismatch_file,
+    ):
+        path.write_text(path.name, encoding="utf-8")
+
+    registry_path = tmp_path / "registry.json"
+    _write_registry(
+        registry_path,
+        [
+            _registry_doc("annual-2025", selected_2025, checksum=_sha256(selected_2025)),
+            _registry_doc(
+                "annual-2024",
+                selected_2024,
+                checksum=_sha256(selected_2024),
+                inferred_fiscal_year=2024,
+                fiscal_period="2024 annual report",
+            ),
+            _registry_doc(
+                "summary-doc",
+                summary_file,
+                checksum=_sha256(summary_file),
+                filename="company annual summary.pdf",
+            ),
+            _registry_doc(
+                "quarter-doc",
+                quarter_file,
+                checksum=_sha256(quarter_file),
+                filename="company q3 quarterly annual report.pdf",
+            ),
+            _registry_doc(
+                "interim-doc",
+                interim_file,
+                checksum=_sha256(interim_file),
+                filename="company interim annual report.pdf",
+            ),
+            _registry_doc("mismatch-doc", mismatch_file, checksum="bad-checksum"),
+        ],
+    )
+    monkeypatch.setattr(
+        backfill,
+        "_execute_selection",
+        lambda **_: (_ for _ in ()).throw(AssertionError("execute path should not run")),
+    )
+
+    report = backfill.main(
+        [
+            "--registry",
+            str(registry_path),
+            "--select-all-eligible-annual-reports",
+            "--report",
+            str(tmp_path / "report.json"),
+        ]
+    )
+
+    assert report["selection_mode"] == "all_eligible_annual_reports"
+    assert report["selected_document_keys"] == ["annual-2025", "annual-2024"]
+    assert report["selected_by_fiscal_year"] == {"2024": 1, "2025": 1}
+    assert report["selected_docs_for_topk_year"] == ["annual-2025"]
+    assert report["skipped_reasons"] == {
+        "checksum_mismatch": 1,
+        "hard_exclusion_terms": 3,
+    }
+    assert report["execution"]["executed"] is False
+
+
+def test_backfill_requires_exactly_one_selection_choice(tmp_path: Path) -> None:
     backfill = _load_backfill_module()
     registry_path = tmp_path / "registry.json"
     _write_registry(registry_path, [])
+    allowlist_path = tmp_path / "allowlist.txt"
+    allowlist_path.write_text("doc-a", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="--use-default-v1d-allowlist"):
+    with pytest.raises(ValueError, match="exactly one"):
         backfill.main(["--registry", str(registry_path), "--report", str(tmp_path / "report.json")])
+    with pytest.raises(ValueError, match="exactly one"):
+        backfill.main(
+            [
+                "--registry",
+                str(registry_path),
+                "--allowlist-file",
+                str(allowlist_path),
+                "--select-all-eligible-annual-reports",
+                "--report",
+                str(tmp_path / "report.json"),
+            ]
+        )
 
 
 def test_backfill_hard_exclusion_checks_company_fields(tmp_path: Path) -> None:
@@ -180,7 +279,10 @@ def test_backfill_execute_reuses_validated_wrapper_and_writes_only_canonical_met
     assert document_result["facts_written"] == 4
     assert report["execution"]["review_status_by_metric"]["revenue"]["verified"] == 1
     assert report["selected_scope_revenue_top3_status"]["status"] == "partial"
-    assert "selected_docs" in report["selected_scope_revenue_top3_status"]["reasons"]
+    assert "returned_rows" in report["selected_scope_revenue_top3_status"]["reasons"]
+    assert set(report["per_metric_top3_status"]) == set(backfill.ALLOWED_METRIC_IDS)
+    for metric_id in backfill.ALLOWED_METRIC_IDS:
+        assert report["per_metric_top3_status"][metric_id]["fiscal_year"] == 2025
     assert list(artifact_dir.rglob("*.headline_metrics.json")) == []
 
 
@@ -317,7 +419,96 @@ def test_backfill_report_counts_missing_metrics_not_as_success(
     assert revenue_summary["verified"] == 1
     assert revenue_summary["missing"] == 1
     assert report["selected_scope_revenue_top3_status"]["status"] == "partial"
-    assert "verified_annual_candidates" in report["selected_scope_revenue_top3_status"]["reasons"]
+    assert "returned_rows" in report["selected_scope_revenue_top3_status"]["reasons"]
+
+
+def test_backfill_execute_does_not_replace_when_no_facts_are_extracted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    backfill = _load_backfill_module()
+    raw_file = tmp_path / "annual.pdf"
+    raw_file.write_text("annual", encoding="utf-8")
+    checksum = _sha256(raw_file)
+    document_key = "doc-a"
+    registry_path = tmp_path / "registry.json"
+    _write_registry(registry_path, [_registry_doc(document_key, raw_file, checksum=checksum)])
+    allowlist_path = tmp_path / "allowlist.txt"
+    allowlist_path.write_text(document_key, encoding="utf-8")
+    artifact_dir = tmp_path / "artifacts"
+    _write_wrapper(
+        artifact_dir / f"{document_key}.financial_facts_backfill.json",
+        backfill=backfill,
+        document_key=document_key,
+        raw_file=raw_file,
+        checksum=checksum,
+        facts=_headline_metrics(document_key=document_key, source_path=raw_file, include_all=False),
+    )
+    db_path = tmp_path / "facts.sqlite"
+    store = SQLiteFinancialFactStore(db_path)
+    old_fact = _financial_fact(document_key, metric_id="revenue").model_copy(
+        update={"fact_id": "doc-a:old", "normalized_value": 123.0}
+    )
+    store.upsert_facts([old_fact])
+    monkeypatch.setattr(
+        backfill,
+        "_run_parse_extract",
+        lambda _entry: (_ for _ in ()).throw(AssertionError("wrapper should be reused")),
+    )
+
+    report = backfill.main(
+        [
+            "--execute",
+            "--reuse-existing-artifacts",
+            "--registry",
+            str(registry_path),
+            "--allowlist-file",
+            str(allowlist_path),
+            "--artifact-dir",
+            str(artifact_dir),
+            "--db",
+            str(db_path),
+            "--report",
+            str(tmp_path / "report.json"),
+        ]
+    )
+
+    rows = store.list_facts(metric_id="revenue")
+    assert [row.fact_id for row in rows] == ["doc-a:old"]
+    assert rows[0].normalized_value == 123
+    document_result = report["execution"]["document_results"][0]
+    assert document_result["status"] == "no_facts_extracted"
+    assert document_result["facts_written"] == 0
+    assert report["execution"]["facts_written_total"] == 0
+
+
+def test_backfill_report_warns_when_db_contains_non_selected_documents(tmp_path: Path) -> None:
+    backfill = _load_backfill_module()
+    raw_file = tmp_path / "annual.pdf"
+    raw_file.write_text("annual", encoding="utf-8")
+    registry_path = tmp_path / "registry.json"
+    _write_registry(registry_path, [_registry_doc("selected-doc", raw_file, checksum=_sha256(raw_file))])
+    allowlist_path = tmp_path / "allowlist.txt"
+    allowlist_path.write_text("selected-doc", encoding="utf-8")
+    db_path = tmp_path / "facts.sqlite"
+    SQLiteFinancialFactStore(db_path).upsert_facts([_financial_fact("outside-doc", metric_id="revenue")])
+
+    report = backfill.main(
+        [
+            "--registry",
+            str(registry_path),
+            "--allowlist-file",
+            str(allowlist_path),
+            "--db",
+            str(db_path),
+            "--report",
+            str(tmp_path / "report.json"),
+        ]
+    )
+
+    assert report["db_scope_check"]["status"] == "warning"
+    assert report["db_scope_check"]["non_selected_document_ids"] == ["outside-doc"]
+    assert "current SQLite KB" in report["current_kb_scope_note"]
 
 
 def _load_backfill_module() -> ModuleType:
@@ -346,6 +537,8 @@ def _registry_doc(
     checksum: str,
     filename: str | None = None,
     inferred_doc_type: str = "annual_report",
+    inferred_fiscal_year: int = 2025,
+    fiscal_period: str = "2025 annual report",
 ) -> dict[str, object]:
     return {
         "document_key": document_key,
@@ -355,8 +548,8 @@ def _registry_doc(
         "file_size": raw_file.stat().st_size,
         "checksum_sha256": checksum,
         "inferred_company_name": f"{document_key} company",
-        "inferred_fiscal_year": 2025,
-        "fiscal_period": "2025 annual report",
+        "inferred_fiscal_year": inferred_fiscal_year,
+        "fiscal_period": fiscal_period,
         "inferred_doc_type": inferred_doc_type,
         "inferred_market": "a_share",
         "language": "zh",
@@ -395,6 +588,7 @@ def _headline_metrics(
     document_key: str,
     source_path: Path,
     include_revenue: bool = True,
+    include_all: bool = True,
 ) -> HeadlineMetricFacts:
     return HeadlineMetricFacts(
         document_id=document_key,
@@ -402,11 +596,11 @@ def _headline_metrics(
         company_name=ExtractedFactField(value=f"{document_key} company"),
         fiscal_period=ExtractedFactField(value="2025 annual report"),
         unit=ExtractedFactField(value="RMB million"),
-        revenue=_field(100, "Revenue 100") if include_revenue else ExtractedFactField(),
-        net_profit=_field(50, "Profit attributable 50"),
-        total_assets=_field(1000, "Total assets 1000"),
-        total_liabilities=_field(500, "Total liabilities 500"),
-        roe=_field(12.3, "ROE 12.3"),
+        revenue=_field(100, "Revenue 100") if include_all and include_revenue else ExtractedFactField(),
+        net_profit=_field(50, "Profit attributable 50") if include_all else ExtractedFactField(),
+        total_assets=_field(1000, "Total assets 1000") if include_all else ExtractedFactField(),
+        total_liabilities=_field(500, "Total liabilities 500") if include_all else ExtractedFactField(),
+        roe=_field(12.3, "ROE 12.3") if include_all else ExtractedFactField(),
     )
 
 

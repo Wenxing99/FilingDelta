@@ -28,6 +28,7 @@ pytest-cache-files-*/
 /docs/ui_contract.md
 /docs/runtime_pitfalls.md
 /docs/metric_extraction_contract.md
+/docs/financial_facts_backfill_runbook.md
 /docs/interview/
 /docs/filingdelta_v2_development_plan.md
 /docs/raw_document_collection_checklist.md

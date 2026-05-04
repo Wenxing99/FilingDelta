@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import sqlite3
 from typing import Any, Iterable
 
 from filingdelta.core.config import REPO_ROOT
@@ -19,10 +20,13 @@ from filingdelta.schemas.filing import FilingDocType, FilingSource, Market
 DEFAULT_REGISTRY_PATH = Path("data/outputs/eval/raw_document_registry.json")
 DEFAULT_DB_PATH = Path("data/indexes/financial_facts.sqlite")
 DEFAULT_ARTIFACT_DIR = Path("data/outputs/financial_facts")
-DEFAULT_REPORT_PATH = Path("data/outputs/eval/financial_facts_backfill_v1d_report.json")
-DEFAULT_TOP_REVENUE_YEAR = 2025
+DEFAULT_REPORT_PATH = Path("data/outputs/eval/financial_facts_backfill_current_kb_report.json")
+DEFAULT_TOPK_FISCAL_YEAR = 2025
 WRAPPER_SCHEMA_VERSION = "financial_facts_backfill_v1"
-REPORT_SCHEMA_VERSION = "financial_facts_backfill_v1d_report"
+REPORT_SCHEMA_VERSION = "financial_facts_backfill_current_kb_report_v1"
+SELECTION_MODE_DEFAULT_V1D_ALLOWLIST = "default_v1d_allowlist"
+SELECTION_MODE_EXPLICIT_ALLOWLIST = "explicit_allowlist"
+SELECTION_MODE_ALL_ELIGIBLE_ANNUAL_REPORTS = "all_eligible_annual_reports"
 
 DEFAULT_V1D_ALLOWLIST = (
     "\u62db\u5546\u94f6\u884c_2025_annual_report-b849785a",
@@ -81,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the fixed first-batch v1D annual-report document_key allowlist.",
     )
     parser.add_argument(
+        "--select-all-eligible-annual-reports",
+        action="store_true",
+        help="Select every current raw registry annual report that passes source/checksum guards.",
+    )
+    parser.add_argument(
         "--execute",
         action="store_true",
         help="Actually parse/extract/convert/write facts. Omit for dry-run selection only.",
@@ -90,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Reuse validated financial_facts_backfill wrapper artifacts instead of rebuilding.",
     )
-    parser.add_argument("--top-revenue-year", type=int, default=DEFAULT_TOP_REVENUE_YEAR)
+    parser.add_argument("--top-revenue-year", type=int, default=DEFAULT_TOPK_FISCAL_YEAR)
     return parser
 
 
@@ -100,21 +109,27 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     artifact_dir = _resolve_repo_path(args.artifact_dir)
     report_path = _resolve_repo_path(args.report)
     db_path = _resolve_repo_path(args.db)
-    allowlist = _load_allowlist(
+    selection_mode, allowlist = _load_selection(
         allowlist_file=args.allowlist_file,
         use_default_v1d=args.use_default_v1d_allowlist,
+        select_all_eligible_annual_reports=args.select_all_eligible_annual_reports,
     )
 
     registry = _load_registry(registry_path)
-    selection = select_registry_documents(registry=registry, allowlist=allowlist)
+    selection = select_registry_documents(
+        registry=registry,
+        selection_mode=selection_mode,
+        allowlist=allowlist,
+    )
     report = _build_base_report(
         mode="execute" if args.execute else "dry_run",
         registry_path=registry_path,
         db_path=db_path,
         artifact_dir=artifact_dir,
+        selection_mode=selection_mode,
         allowlist=allowlist,
         selection=selection,
-        top_revenue_year=args.top_revenue_year,
+        topk_fiscal_year=args.top_revenue_year,
     )
 
     if args.execute:
@@ -123,7 +138,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             artifact_dir=artifact_dir,
             db_path=db_path,
             reuse_existing_artifacts=args.reuse_existing_artifacts,
-            top_revenue_year=args.top_revenue_year,
+            topk_fiscal_year=args.top_revenue_year,
         )
         report.update(execute_summary)
     else:
@@ -132,6 +147,10 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
             "note": "dry-run only: parser/extractor/store/indexer were not instantiated",
         }
 
+    report["db_scope_check"] = _db_scope_check(
+        db_path=db_path,
+        selected_document_keys=selection["selected_document_keys"],
+    )
     _write_json(report_path, report)
     print(f"financial facts backfill {'executed' if args.execute else 'dry-run'} report: {report_path}")
     return report
@@ -140,56 +159,74 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
 def select_registry_documents(
     *,
     registry: RawDocumentRegistry,
-    allowlist: Iterable[str],
+    selection_mode: str,
+    allowlist: Iterable[str] | None = None,
 ) -> dict[str, Any]:
-    allowlist_ordered = _dedupe_preserve_order(allowlist)
     by_key = {entry.document_key: entry for entry in registry.documents}
     entries: list[dict[str, Any]] = []
     selected: list[RawRegistryEntry] = []
     hard_exclusion_samples: list[dict[str, Any]] = []
 
-    for document_key in allowlist_ordered:
-        entry = by_key.get(document_key)
-        if entry is None:
-            entries.append(
-                {
-                    "document_key": document_key,
-                    "status": "skipped",
-                    "reasons": ["not_in_registry"],
-                }
-            )
-            continue
+    allowlist_ordered = _dedupe_preserve_order(allowlist or [])
+    if selection_mode == SELECTION_MODE_ALL_ELIGIBLE_ANNUAL_REPORTS:
+        candidate_entries = list(registry.documents)
+        missing_allowlist_count = 0
+    else:
+        candidate_entries = []
+        missing_allowlist_count = 0
+        for document_key in allowlist_ordered:
+            entry = by_key.get(document_key)
+            if entry is None:
+                entries.append(
+                    {
+                        "document_key": document_key,
+                        "status": "skipped",
+                        "reasons": ["not_in_registry"],
+                    }
+                )
+                missing_allowlist_count += 1
+                continue
+            candidate_entries.append(entry)
 
-        outcome = _evaluate_registry_entry(entry)
-        entry_report = {
-            "document_key": entry.document_key,
-            "status": "selected" if outcome["selected"] else "skipped",
-            "reasons": outcome["reasons"],
-            "local_path": entry.local_path,
-            "resolved_source_path": str(_resolve_repo_path(Path(entry.local_path))),
-            "inferred_doc_type": entry.inferred_doc_type,
-            "source_exists": outcome["source_exists"],
-            "checksum_match": outcome["checksum_match"],
-            "hard_exclusion_terms": outcome["hard_exclusion_terms"],
-        }
+    for entry in candidate_entries:
+        entry_report = _registry_entry_report(entry)
         entries.append(entry_report)
-        if outcome["hard_exclusion_terms"]:
+        if entry_report["hard_exclusion_terms"]:
             hard_exclusion_samples.append(entry_report)
-        if outcome["selected"]:
+        if entry_report["status"] == "selected":
             selected.append(entry)
 
     return {
+        "selection_mode": selection_mode,
         "allowlist": allowlist_ordered,
         "entries": entries,
         "selected_entries": selected,
         "selected_document_keys": [entry.document_key for entry in selected],
         "selected_count": len(selected),
         "skipped_count": len(entries) - len(selected),
-        "registry_skipped_not_allowlisted_count": max(
+        "selected_by_fiscal_year": _count_selected_by_fiscal_year(selected),
+        "registry_skipped_not_selected_count": max(
             0,
-            len(registry.documents) - sum(1 for key in allowlist_ordered if key in by_key),
+            len(registry.documents) - len(candidate_entries),
         ),
+        "allowlist_missing_count": missing_allowlist_count,
         "hard_exclusion_samples": hard_exclusion_samples[:10],
+    }
+
+
+def _registry_entry_report(entry: RawRegistryEntry) -> dict[str, Any]:
+    outcome = _evaluate_registry_entry(entry)
+    return {
+        "document_key": entry.document_key,
+        "status": "selected" if outcome["selected"] else "skipped",
+        "reasons": outcome["reasons"],
+        "local_path": entry.local_path,
+        "resolved_source_path": str(_resolve_repo_path(Path(entry.local_path))),
+        "inferred_doc_type": entry.inferred_doc_type,
+        "inferred_fiscal_year": entry.inferred_fiscal_year,
+        "source_exists": outcome["source_exists"],
+        "checksum_match": outcome["checksum_match"],
+        "hard_exclusion_terms": outcome["hard_exclusion_terms"],
     }
 
 
@@ -199,7 +236,7 @@ def _execute_selection(
     artifact_dir: Path,
     db_path: Path,
     reuse_existing_artifacts: bool,
-    top_revenue_year: int,
+    topk_fiscal_year: int,
 ) -> dict[str, Any]:
     from filingdelta.financial_facts import FinancialFactsQueryService, SQLiteFinancialFactStore
 
@@ -226,6 +263,11 @@ def _execute_selection(
             )
             converted_facts = convert_headline_metric_facts(facts)
             _assert_allowed_metric_ids(converted_facts, allowed_metric_ids=allowed_metric_ids)
+            if not converted_facts:
+                document_report["status"] = "no_facts_extracted"
+                document_report["metrics"] = _empty_metric_report()
+                document_reports.append(document_report)
+                continue
             replace_result = store.replace_facts_for_document(entry.document_key, converted_facts)
             document_report["status"] = "written"
             document_report["facts_written"] = replace_result["upserted"]
@@ -243,12 +285,13 @@ def _execute_selection(
         1 for result in document_reports if result.get("status") == "written"
     )
     query_service = FinancialFactsQueryService(db_path)
-    top_revenue_result = query_service.top_metric_by_year(
-        metric_id="revenue",
-        fiscal_year=top_revenue_year,
-        limit=3,
+    per_metric_top3_status = _per_metric_top3_status(
+        query_service=query_service,
+        metric_ids=sorted(ALLOWED_METRIC_IDS),
+        fiscal_year=topk_fiscal_year,
         document_ids=selected_document_ids,
     )
+    revenue_result = per_metric_top3_status["revenue"]
 
     return {
         "execution": {
@@ -264,18 +307,18 @@ def _execute_selection(
             ),
             "review_status_by_metric": _aggregate_metric_reports(document_reports),
         },
-        "selected_scope_revenue_top3": [
-            fact.model_dump(mode="json") for fact in top_revenue_result.facts
-        ],
-        "selected_scope_revenue_top3_stats": top_revenue_result.summary.model_dump(mode="json"),
-        "selected_scope_revenue_top3_status": _v1d_success_status(
-            selected_count=len(selected_document_ids),
+        "per_metric_top3_status": per_metric_top3_status,
+        "selected_scope_revenue_top3": revenue_result["facts"],
+        "selected_scope_revenue_top3_stats": revenue_result["summary"],
+        "selected_scope_revenue_top3_status": _topk_status(
+            status=revenue_result["status"],
+            summary=revenue_result["summary"],
+            notes=revenue_result["notes"],
             written_document_count=written_document_count,
-            stats=top_revenue_result.summary.model_dump(mode="json"),
         ),
-        "selected_sample_only_caveat": (
-            "This Top3 is limited to the selected v1D backfill sample and is not a "
-            "full-market ranking."
+        "current_kb_scope_note": (
+            "Coverage is limited to current raw registry eligible annual reports and "
+            "the current SQLite KB."
         ),
     }
 
@@ -447,21 +490,31 @@ def _build_base_report(
     registry_path: Path,
     db_path: Path,
     artifact_dir: Path,
+    selection_mode: str,
     allowlist: list[str],
     selection: dict[str, Any],
-    top_revenue_year: int,
+    topk_fiscal_year: int,
 ) -> dict[str, Any]:
     selected_document_keys = selection["selected_document_keys"]
     entries = selection["entries"]
+    selected_docs_for_topk_year = [
+        entry.document_key
+        for entry in selection["selected_entries"]
+        if entry.inferred_fiscal_year == topk_fiscal_year
+    ]
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
         "mode": mode,
+        "selection_mode": selection_mode,
         "registry_path": str(registry_path),
         "db_path": str(db_path),
         "artifact_dir": str(artifact_dir),
         "allowlist": allowlist,
         "selected_document_keys": selected_document_keys,
         "selected_count": selection["selected_count"],
+        "selected_by_fiscal_year": selection["selected_by_fiscal_year"],
+        "topk_fiscal_year": topk_fiscal_year,
+        "selected_docs_for_topk_year": selected_docs_for_topk_year,
         "skipped_count": selection["skipped_count"],
         "skipped_reasons": dict(
             sorted(
@@ -475,7 +528,7 @@ def _build_base_report(
         ),
         "selection": entries,
         "hard_exclusion_samples": selection["hard_exclusion_samples"],
-        "top_revenue_year": top_revenue_year,
+        "top_revenue_year": topk_fiscal_year,
         "selected_scope_revenue_top3": [],
         "selected_scope_revenue_top3_stats": {
             "selected_docs": len(selected_document_keys),
@@ -489,9 +542,36 @@ def _build_base_report(
             "status": "not_run",
             "reasons": ["dry_run"],
         },
-        "selected_sample_only_caveat": (
-            "This report covers only the selected v1D allowlist, not full-market coverage."
+        "per_metric_top3_status": {
+            metric_id: {
+                "status": "not_run",
+                "metric_id": metric_id,
+                "fiscal_year": topk_fiscal_year,
+                "limit": 3,
+                "facts": [],
+                "summary": {
+                    "selected_docs": len(selected_document_keys),
+                    "candidate_count": 0,
+                    "verified_annual_candidates": 0,
+                    "after_citation_filter": 0,
+                    "after_company_dedupe": 0,
+                    "excluded_non_annual_count": 0,
+                    "excluded_duplicate_company_count": 0,
+                    "returned_rows": 0,
+                },
+                "notes": ["dry_run"],
+                "reasons": ["dry_run"],
+            }
+            for metric_id in sorted(ALLOWED_METRIC_IDS)
+        },
+        "current_kb_scope_note": (
+            "Coverage is limited to current raw registry eligible annual reports and "
+            "the current SQLite KB."
         ),
+        "db_scope_check": {
+            "status": "not_run",
+            "note": "db scope is checked after dry-run/execute report assembly",
+        },
     }
 
 
@@ -531,6 +611,136 @@ def _aggregate_metric_reports(
     return summary
 
 
+def _per_metric_top3_status(
+    *,
+    query_service: Any,
+    metric_ids: Iterable[str],
+    fiscal_year: int,
+    document_ids: list[str],
+) -> dict[str, dict[str, Any]]:
+    report: dict[str, dict[str, Any]] = {}
+    for metric_id in metric_ids:
+        result = query_service.top_metric_by_year(
+            metric_id=metric_id,
+            fiscal_year=fiscal_year,
+            limit=3,
+            document_ids=document_ids,
+        )
+        metric_report = _serialize_topk_result(result)
+        metric_report["reasons"] = _topk_reasons(
+            status=metric_report["status"],
+            summary=metric_report["summary"],
+            notes=metric_report["notes"],
+        )
+        report[metric_id] = metric_report
+    return report
+
+
+def _serialize_topk_result(result: Any) -> dict[str, Any]:
+    return {
+        "status": result.status,
+        "metric_id": result.metric_id,
+        "fiscal_year": result.fiscal_year,
+        "limit": result.limit,
+        "facts": [fact.model_dump(mode="json") for fact in result.facts],
+        "summary": result.summary.model_dump(mode="json"),
+        "notes": list(result.notes),
+    }
+
+
+def _topk_status(
+    *,
+    status: str,
+    summary: dict[str, int],
+    notes: list[str],
+    written_document_count: int,
+) -> dict[str, Any]:
+    reasons = _topk_reasons(status=status, summary=summary, notes=notes)
+    if written_document_count == 0:
+        reasons.append("no_written_documents")
+    return {
+        "status": status,
+        "reasons": _dedupe_preserve_order(reasons),
+        "notes": notes,
+        "summary": summary,
+    }
+
+
+def _topk_reasons(
+    *,
+    status: str,
+    summary: dict[str, int],
+    notes: list[str],
+) -> list[str]:
+    reasons: list[str] = []
+    if status != "success":
+        reasons.append(f"query_status={status}")
+    if summary.get("candidate_count", 0) == 0:
+        reasons.append("candidate_count")
+    if summary.get("verified_annual_candidates", 0) == 0:
+        reasons.append("verified_annual_candidates")
+    if summary.get("after_citation_filter", 0) == 0:
+        reasons.append("after_citation_filter")
+    if summary.get("after_company_dedupe", 0) == 0:
+        reasons.append("after_company_dedupe")
+    if summary.get("returned_rows", 0) < summary.get("limit", 3):
+        reasons.append("returned_rows")
+    reasons.extend(notes)
+    return _dedupe_preserve_order(reasons)
+
+
+def _count_selected_by_fiscal_year(selected: Iterable[RawRegistryEntry]) -> dict[str, int]:
+    counts = Counter(
+        str(entry.inferred_fiscal_year) if entry.inferred_fiscal_year is not None else "unknown"
+        for entry in selected
+    )
+    return dict(sorted(counts.items()))
+
+
+def _db_scope_check(*, db_path: Path, selected_document_keys: list[str]) -> dict[str, Any]:
+    selected = set(selected_document_keys)
+    if not db_path.exists():
+        return {
+            "status": "unavailable",
+            "selected_document_count": len(selected),
+            "db_document_count": 0,
+            "non_selected_document_ids": [],
+            "notes": [f"db_missing={db_path}"],
+        }
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT document_id FROM financial_facts ORDER BY document_id"
+            ).fetchall()
+    except sqlite3.OperationalError as exc:
+        if "no such table" in str(exc).casefold():
+            return {
+                "status": "unavailable",
+                "selected_document_count": len(selected),
+                "db_document_count": 0,
+                "non_selected_document_ids": [],
+                "notes": ["financial_facts_table_missing"],
+            }
+        raise
+
+    db_document_ids = [str(row[0]) for row in rows]
+    non_selected = [document_id for document_id in db_document_ids if document_id not in selected]
+    return {
+        "status": "warning" if non_selected else "ok",
+        "selected_document_count": len(selected),
+        "db_document_count": len(db_document_ids),
+        "non_selected_document_ids": non_selected,
+        "notes": (
+            [
+                "current SQLite KB contains document ids outside this selection; "
+                "Ask Filing defaults to reading the whole DB."
+            ]
+            if non_selected
+            else []
+        ),
+    }
+
+
 def _assert_allowed_metric_ids(
     facts: Iterable[FinancialFact],
     *,
@@ -545,29 +755,50 @@ def _wrapper_path(*, artifact_dir: Path, document_key: str) -> Path:
     return artifact_dir / f"{document_key}.financial_facts_backfill.json"
 
 
-def _load_allowlist(
+def _load_selection(
     *,
     allowlist_file: Path | None,
     use_default_v1d: bool,
-) -> list[str]:
+    select_all_eligible_annual_reports: bool,
+) -> tuple[str, list[str]]:
+    selected_modes = [
+        allowlist_file is not None,
+        use_default_v1d,
+        select_all_eligible_annual_reports,
+    ]
+    if sum(1 for selected in selected_modes if selected) != 1:
+        raise ValueError(
+            "Provide exactly one of --use-default-v1d-allowlist, --allowlist-file, "
+            "or --select-all-eligible-annual-reports."
+        )
+    if select_all_eligible_annual_reports:
+        return SELECTION_MODE_ALL_ELIGIBLE_ANNUAL_REPORTS, []
     if allowlist_file is None:
-        if use_default_v1d:
-            return list(DEFAULT_V1D_ALLOWLIST)
-        raise ValueError("Provide --use-default-v1d-allowlist or --allowlist-file.")
+        return SELECTION_MODE_DEFAULT_V1D_ALLOWLIST, list(DEFAULT_V1D_ALLOWLIST)
+
     path = _resolve_repo_path(allowlist_file)
     if path.suffix.lower() == ".json":
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, list):
-            return _dedupe_preserve_order(str(item) for item in payload)
+            return (
+                SELECTION_MODE_EXPLICIT_ALLOWLIST,
+                _dedupe_preserve_order(str(item) for item in payload),
+            )
         if isinstance(payload, dict):
             values = payload.get("document_keys") or payload.get("allowlist")
             if isinstance(values, list):
-                return _dedupe_preserve_order(str(item) for item in values)
+                return (
+                    SELECTION_MODE_EXPLICIT_ALLOWLIST,
+                    _dedupe_preserve_order(str(item) for item in values),
+                )
         raise ValueError(f"Unsupported allowlist JSON shape: {path}")
-    return _dedupe_preserve_order(
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.strip().startswith("#")
+    return (
+        SELECTION_MODE_EXPLICIT_ALLOWLIST,
+        _dedupe_preserve_order(
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ),
     )
 
 
@@ -618,29 +849,6 @@ def _dedupe_preserve_order(items: Iterable[str]) -> list[str]:
         seen.add(item)
         deduped.append(item)
     return deduped
-
-
-def _v1d_success_status(
-    *,
-    selected_count: int,
-    written_document_count: int,
-    stats: dict[str, int],
-) -> dict[str, Any]:
-    checks = {
-        "selected_docs": selected_count == 5,
-        "written_documents": written_document_count == 5,
-        "verified_annual_candidates": stats.get("verified_annual_candidates") == 5,
-        "after_citation_filter": stats.get("after_citation_filter") == 5,
-        "after_company_dedupe": stats.get("after_company_dedupe") == 5,
-        "returned_rows": stats.get("returned_rows") == 3,
-    }
-    failed = [name for name, passed in checks.items() if not passed]
-    if not failed:
-        return {"status": "success", "reasons": []}
-    return {
-        "status": "partial" if stats.get("returned_rows", 0) else "failed",
-        "reasons": failed,
-    }
 
 
 if __name__ == "__main__":

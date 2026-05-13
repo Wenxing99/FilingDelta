@@ -3,7 +3,7 @@ from __future__ import annotations
 from llama_index.llms.openai import OpenAI
 
 from filingdelta.core.config import Settings, get_settings
-from filingdelta.ingestion.page_locators import CandidatePageLocator
+from filingdelta.ingestion.page_locators import select_summary_pages
 from filingdelta.ingestion.section_taxonomy import SECTION_KEYWORDS_BY_TITLE, SECTION_TITLES
 from filingdelta.prompts.reader import READER_SUMMARY_PROMPT
 from filingdelta.schemas.filing import FilingChunk, ParsedFiling
@@ -35,7 +35,10 @@ class ReaderAgent:
         parsed_filing: ParsedFiling,
         chunks: list[FilingChunk],
     ) -> ReaderDraftResult:
-        page_numbers = _select_summary_pages(parsed_filing)
+        page_numbers = select_summary_pages(
+            parsed_filing,
+            section_keyword_groups=_SECTION_KEYWORDS.values(),
+        )
         page_context = _build_page_context(parsed_filing, page_numbers)
         chunk_count = len(chunks)
 
@@ -59,43 +62,6 @@ class ReaderAgent:
         result.overview = _normalize_overview(result.overview)
         result.sections = _normalize_sections(result.sections)
         return result
-
-
-def _select_summary_pages(parsed_filing: ParsedFiling) -> list[int]:
-    locator = CandidatePageLocator()
-    selection = locator.locate(parsed_filing)
-
-    page_numbers = [
-        page.page_number for page in parsed_filing.pages[: min(10, len(parsed_filing.pages))]
-    ]
-    page_numbers.extend(selection.shared_pages)
-    page_numbers.extend(selection.pages_for("revenue")[:3])
-    page_numbers.extend(selection.pages_for("net_profit")[:3])
-
-    for keywords in _SECTION_KEYWORDS.values():
-        page_numbers.extend(_match_section_pages(parsed_filing, keywords, limit=2))
-
-    deduped = _dedupe_preserve_order(page_numbers)
-    return deduped[:14]
-
-
-def _match_section_pages(
-    parsed_filing: ParsedFiling,
-    keywords: tuple[str, ...],
-    *,
-    limit: int,
-) -> list[int]:
-    matched_pages: list[int] = []
-    normalized_keywords = [_normalize_for_match(keyword) for keyword in keywords]
-
-    for page in parsed_filing.pages:
-        page_text = _normalize_for_match(_page_text(page))
-        if any(keyword and keyword in page_text for keyword in normalized_keywords):
-            matched_pages.append(page.page_number)
-            if len(matched_pages) >= limit:
-                break
-
-    return matched_pages
 
 
 def _build_page_context(parsed_filing: ParsedFiling, page_numbers: list[int]) -> str:
@@ -167,21 +133,6 @@ def _truncate_text(text: str, limit: int = 2600) -> str:
     if len(text) <= limit:
         return text
     return f"{text[: limit - 3].rstrip()}..."
-
-
-def _normalize_for_match(text: str) -> str:
-    return "".join(text.lower().split())
-
-
-def _dedupe_preserve_order(items: list[int]) -> list[int]:
-    seen: set[int] = set()
-    deduped: list[int] = []
-    for item in items:
-        if item in seen:
-            continue
-        seen.add(item)
-        deduped.append(item)
-    return deduped
 
 
 def _normalize_text_key(text: str) -> str:
